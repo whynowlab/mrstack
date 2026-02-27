@@ -7,6 +7,7 @@ JarvisEngine is the facade that composes:
 - PersonaLayer: context-aware tone injection
 """
 
+from pathlib import Path
 from typing import List, Optional
 
 import structlog
@@ -36,9 +37,13 @@ class JarvisEngine:
         self,
         event_bus: EventBus,
         target_chat_ids: List[int],
-        working_directory: str = "/Users/dd",
-        memory_base: str = "/Users/dd/claude-telegram/memory",
+        working_directory: str = "",
+        memory_base: str = "",
     ) -> None:
+        if not working_directory:
+            working_directory = str(Path.home())
+        if not memory_base:
+            memory_base = str(Path.home() / "claude-telegram" / "memory")
         self.context_engine = ContextEngine(
             event_bus=event_bus,
             target_chat_ids=target_chat_ids,

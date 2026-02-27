@@ -1,12 +1,11 @@
 # Mr.Stack Integration Guide
 
-This guide explains how to integrate Mr.Stack into your [claude-code-telegram](https://github.com/nicepkg/claude-code-telegram) bot.
+> **Recommended:** Use `./install.sh` which automates all steps below.
+> This guide is for manual installation or for understanding what the installer does.
 
-## Overview
+## What gets installed
 
-Mr.Stack adds 5 files to your bot and modifies 3 existing files:
-
-**New files** → `src/jarvis/`
+**5 new files** → `src/jarvis/`
 ```
 __init__.py          # JarvisEngine facade
 persona.py           # Context states + tone builder
@@ -15,28 +14,39 @@ pattern_learner.py   # Interaction logging + patterns
 coach.py             # Daily coaching reports
 ```
 
-**Modified files:**
+**3 patched files:**
 ```
-src/config/settings.py     # Add enable_jarvis field
-src/main.py                # JarvisEngine lifecycle
-src/bot/orchestrator.py    # /jarvis, /coach commands + logging hook
+src/config/settings.py     # +enable_jarvis field
+src/main.py                # +JarvisEngine lifecycle (start/stop)
+src/bot/orchestrator.py    # +/jarvis, /coach commands + logging hook
 ```
 
-## Step 1: Copy Source Files
+## Finding your installation path
 
 ```bash
-cp -r mrstack/src/jarvis/ <your-bot-packages>/src/jarvis/
+# uv (most common)
+ls ~/.local/share/uv/tools/claude-code-telegram/lib/python3.*/site-packages/src/
+
+# pipx
+ls ~/.local/pipx/venvs/claude-code-telegram/lib/python3.*/site-packages/src/
 ```
 
-Where `<your-bot-packages>` is your bot's site-packages directory.
-For uv-installed bots, this is typically:
+The directory containing `src/` is your `SITE_PKG`. For example:
 ```
 ~/.local/share/uv/tools/claude-code-telegram/lib/python3.11/site-packages/
 ```
 
-## Step 2: Modify settings.py
+## Manual Steps
 
-Add after `enable_clipboard_monitor`:
+### Step 1: Copy source files
+
+```bash
+cp -r mrstack/src/jarvis/ $SITE_PKG/src/jarvis/
+```
+
+### Step 2: Patch settings.py
+
+Add after `enable_clipboard_monitor` field:
 
 ```python
 enable_jarvis: bool = Field(
@@ -45,14 +55,15 @@ enable_jarvis: bool = Field(
 )
 ```
 
-## Step 3: Modify main.py
+### Step 3: Patch main.py
 
-Add `jarvis_engine = None` next to `clipboard_monitor = None`.
-
-After the clipboard_monitor block, add:
-
+**3a.** Add variable declaration next to `clipboard_monitor = None`:
 ```python
-# Jarvis engine (if enabled)
+jarvis_engine = None
+```
+
+**3b.** Add startup block after clipboard monitor initialization:
+```python
 if config.enable_jarvis:
     from src.jarvis import JarvisEngine
 
@@ -66,49 +77,114 @@ if config.enable_jarvis:
     logger.info("Jarvis engine enabled")
 ```
 
-In the shutdown block, add before clipboard_monitor.stop():
-
+**3c.** Add shutdown (before `clipboard_monitor.stop()`):
 ```python
 if jarvis_engine:
     await jarvis_engine.stop()
 ```
 
-## Step 4: Modify orchestrator.py
+### Step 4: Patch orchestrator.py
 
-### 4a. Register commands
-
-In `_register_agentic_handlers`, add to the handlers list:
+**4a.** In `_register_agentic_handlers`, add to handlers list:
 ```python
 ("jarvis", self.agentic_jarvis_toggle),
 ("coach", self.agentic_coach),
 ```
 
-### 4b. Add bot commands
-
-In `get_bot_commands`, add:
+**4b.** In `get_bot_commands`, add:
 ```python
 BotCommand("jarvis", "Jarvis 토글"),
 BotCommand("coach", "코칭 리포트"),
 ```
 
-### 4c. Update help text
-
-In `agentic_help`, add:
+**4c.** In `agentic_help`, add to help text:
 ```python
 "/jarvis — Jarvis 상시 대기 모드\n"
 "/coach — 일일 코칭 리포트\n"
 ```
 
-### 4d. Add handler methods
+**4d.** Add these two methods to the orchestrator class:
 
-Add these methods to the orchestrator class (see source for full implementation):
-- `agentic_jarvis_toggle()` — toggle engine on/off
-- `agentic_coach()` — generate coaching report via Claude
-
-### 4e. Add interaction logging
-
-In `agentic_text`, after `storage.save_claude_interaction()`:
 ```python
+async def agentic_jarvis_toggle(
+    self, update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Toggle Jarvis proactive context engine on/off."""
+    engine = context.bot_data.get("jarvis_engine")
+    if not engine:
+        await update.message.reply_text(
+            "Jarvis 엔진이 비활성화되어 있습니다.\n"
+            "<code>ENABLE_JARVIS=true</code>를 .env에 추가하세요.",
+            parse_mode="HTML",
+        )
+        return
+
+    new_state = engine.toggle()
+    state_str = "ON" if new_state else "OFF"
+    desc = (
+        "맥락 인식, 패턴 학습, 선제적 알림이 활성화됩니다."
+        if new_state
+        else "Jarvis 상시 대기를 중지합니다."
+    )
+    await update.message.reply_text(
+        f"Jarvis: <b>{state_str}</b>\n{desc}",
+        parse_mode="HTML",
+    )
+
+async def agentic_coach(
+    self, update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Generate and send daily coaching report."""
+    engine = context.bot_data.get("jarvis_engine")
+    if not engine:
+        await update.message.reply_text(
+            "Jarvis 엔진이 비활성화되어 있습니다.\n"
+            "<code>ENABLE_JARVIS=true</code>를 .env에 추가하세요.",
+            parse_mode="HTML",
+        )
+        return
+
+    progress_msg = await update.message.reply_text("코칭 리포트 생성 중...")
+    try:
+        prompt = engine.coach.generate_report()
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await progress_msg.edit_text("Claude 연동을 사용할 수 없습니다.")
+            return
+
+        user_id = update.effective_user.id
+        working_dir = context.user_data.get(
+            "working_directory", str(self.settings.approved_directory)
+        )
+
+        claude_response = await claude_integration.run_command(
+            user_id=user_id,
+            prompt=prompt,
+            working_directory=working_dir,
+            force_new=True,
+        )
+
+        from .utils.formatting import ResponseFormatter
+
+        formatter = ResponseFormatter(self.settings)
+        formatted_messages = formatter.format_claude_response(
+            claude_response.content
+        )
+
+        await progress_msg.delete()
+        for msg in formatted_messages:
+            await update.message.reply_text(
+                msg.text,
+                parse_mode=msg.parse_mode,
+            )
+    except Exception as e:
+        logger.error("Coach report failed", error=str(e))
+        await progress_msg.edit_text(f"코칭 리포트 생성 실패: {e}")
+```
+
+**4e.** In `agentic_text`, after `storage.save_claude_interaction()` block:
+```python
+# Jarvis interaction logging
 try:
     jarvis_engine = context.bot_data.get("jarvis_engine")
     if jarvis_engine:
@@ -121,48 +197,27 @@ try:
             state=jarvis_engine.current_state,
         )
 except Exception:
-    pass
+    pass  # Never break main flow for Jarvis logging
 ```
 
-## Step 5: Enable
+### Step 5: Configure .env
 
-Add to your `.env`:
 ```bash
+# Required
 ENABLE_JARVIS=true
+
+# Required for proactive notifications
+NOTIFICATION_CHAT_IDS=<your_telegram_user_id>
 ```
 
-Restart your bot. Mr.Stack starts immediately.
+Find your Telegram user ID by messaging [@userinfobot](https://t.me/userinfobot) on Telegram.
 
-## Customization
+### Step 6: Create memory directory
 
-### Trigger cooldowns
-
-Edit `context_engine.py` `_TRIGGER_COOLDOWNS` dict:
-```python
-_TRIGGER_COOLDOWNS = {
-    "battery_warning": 1800,        # 30 min
-    "long_coding_session": 3600,    # 1 hour
-    ...
-}
+```bash
+mkdir -p ~/claude-telegram/memory/patterns
 ```
 
-### App-to-state mapping
+### Step 7: Restart your bot
 
-Edit `context_engine.py` `_APP_STATE_MAP` to add your apps:
-```python
-_APP_STATE_MAP = {
-    "cursor": ContextState.CODING,
-    "obsidian": ContextState.BROWSING,
-    ...
-}
-```
-
-### Persona tone
-
-Edit `persona.py` `build_prompt_prefix()` to change how Mr.Stack speaks in each state.
-
-### Memory location
-
-Default: `~/claude-telegram/memory/patterns/`
-
-Change by passing `memory_base` to `JarvisEngine()` in `main.py`.
+Mr.Stack starts immediately — no need to run `/jarvis` to activate.

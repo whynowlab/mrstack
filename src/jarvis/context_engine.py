@@ -94,7 +94,7 @@ class ContextEngine:
         self,
         event_bus: EventBus,
         target_chat_ids: List[int],
-        working_directory: str = "/Users/dd",
+        working_directory: str = "",
     ) -> None:
         self.event_bus = event_bus
         self.target_chat_ids = target_chat_ids
