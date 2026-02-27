@@ -504,6 +504,31 @@ Mr.Stack은 단기 기억과 장기 기억을 분리해서 관리합니다.
 SQLite 데이터베이스(대화 기록)가 별도로 있지만, 이것도 수십 MB 수준입니다.
 용량 걱정은 하지 않아도 됩니다.
 
+### 토큰(사용량)을 많이 잡아먹지 않나요?
+
+**Mr.Stack이 추가하는 Claude API 호출은 하루 15~20회 수준**입니다. Max 플랜 기준으로 전혀 부담되지 않습니다.
+
+토큰 소비 구조를 구분하면:
+
+| 구분 | 토큰 소비 | 설명 |
+|------|----------|------|
+| **5분 폴링 (시스템 스캔)** | **X — 제로** | osascript, pmset, git 등 로컬 subprocess만 실행 |
+| **패턴 로깅** | **X — 제로** | 로컬 JSONL 파일 append만 |
+| **상태 분류** | **X — 제로** | if문 분기만 (앱 이름 → 상태 매핑) |
+| **Jarvis 트리거** | O — 하루 3~5회 | 조건 충족 시에만. 시간당 최대 10회 하드캡 |
+| **스케줄 작업** | O — 하루 10~15회 | "변경 없으면 빈 응답" 조건으로 실질 소비 절감 |
+
+가장 비싼 연산(5분 폴링)이 토큰을 전혀 쓰지 않는 게 핵심입니다.
+
+**Pro 플랜 사용자라면** `memory-sync`(3시간마다)와 `github-check`(2시간마다)를 비활성화하거나 주기를 늘리는 걸 권장합니다:
+
+```bash
+# 스케줄 작업 관리
+~/claude-telegram/schedulers/manage-jobs.sh list     # 전체 목록
+~/claude-telegram/schedulers/manage-jobs.sh disable memory-sync   # 비활성화
+~/claude-telegram/schedulers/manage-jobs.sh disable github-check  # 비활성화
+```
+
 ### 여러 맥북에서 사용 가능한가요?
 
 각 맥북에 별도로 설치하면 됩니다. 메모리 데이터를 동기화하려면 `~/claude-telegram/memory/` 폴더를 iCloud나 git으로 공유할 수 있습니다.
