@@ -325,6 +325,86 @@ PYEOF
     info "Added /jarvis, /coach commands + interaction logging"
 fi
 
+# ── Step 6b: Patch agentic_photo for image vision ──
+step "Patching image handler..."
+
+if grep -q "image_prompt" "$ORCH" 2>/dev/null; then
+    info "Image vision patch already applied — skipping"
+else
+    cat > /tmp/mrstack_photo_patch.py << 'PYEOF'
+with open("ORCH_FILE", "r") as f:
+    content = f.read()
+
+OLD_PHOTO = '''            verbose_level = self._get_verbose_level(context)
+            tool_log: List[Dict[str, Any]] = []
+            on_stream = self._make_stream_callback(
+                verbose_level, progress_msg, tool_log, time.time()
+            )
+
+            heartbeat = self._start_typing_heartbeat(chat)
+            try:
+                claude_response = await claude_integration.run_command(
+                    prompt=processed_image.prompt,'''
+
+NEW_PHOTO = '''            # Save image to temp file so Claude can read it with the Read tool
+            import tempfile
+            import base64 as b64mod
+
+            image_format = processed_image.metadata.get("format", "png") if processed_image.metadata else "png"
+            with tempfile.NamedTemporaryFile(
+                suffix=f".{image_format}", delete=False, dir=str(current_dir)
+            ) as tmp:
+                tmp.write(b64mod.b64decode(processed_image.base64_data))
+                image_path = tmp.name
+
+            caption = update.message.caption or ""
+            image_prompt = (
+                f"사용자가 이미지를 보냈습니다. 이미지 파일 경로: {image_path}\\n"
+                f"Read 도구로 이 이미지 파일을 읽어서 내용을 확인하고 분석해주세요.\\n"
+            )
+            if caption:
+                image_prompt += f"사용자 메시지: {caption}\\n"
+            else:
+                image_prompt += "이미지를 분석하고 관련 인사이트를 제공해주세요.\\n"
+
+            verbose_level = self._get_verbose_level(context)
+            tool_log: List[Dict[str, Any]] = []
+            on_stream = self._make_stream_callback(
+                verbose_level, progress_msg, tool_log, time.time()
+            )
+
+            heartbeat = self._start_typing_heartbeat(chat)
+            try:
+                claude_response = await claude_integration.run_command(
+                    prompt=image_prompt,'''
+
+if OLD_PHOTO in content:
+    content = content.replace(OLD_PHOTO, NEW_PHOTO)
+
+    # Add cleanup after heartbeat.cancel()
+    content = content.replace(
+        "            finally:\n                heartbeat.cancel()\n\n            if force_new:",
+        "            finally:\n                heartbeat.cancel()\n                # Clean up temp image file\n                import os as _os\n                try:\n                    _os.unlink(image_path)\n                except OSError:\n                    pass\n\n            if force_new:",
+        1,  # Only replace the first occurrence (in agentic_photo)
+    )
+
+    with open("ORCH_FILE", "w") as f:
+        f.write(content)
+    print("OK")
+else:
+    print("SKIP: agentic_photo pattern not found")
+PYEOF
+
+    sed -i '' "s|ORCH_FILE|$ORCH|g" /tmp/mrstack_photo_patch.py
+    RESULT=$(python3 /tmp/mrstack_photo_patch.py)
+    rm -f /tmp/mrstack_photo_patch.py
+    if [ "$RESULT" = "OK" ]; then
+        info "Patched agentic_photo for image vision"
+    else
+        warn "Could not patch agentic_photo (pattern mismatch) — image vision not applied"
+    fi
+fi
+
 # ── Step 7: Configure .env ──
 step "Configuring .env..."
 
