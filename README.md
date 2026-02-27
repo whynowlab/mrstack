@@ -170,11 +170,18 @@ Mr.Stack은 지금 내 상태에 맞게 말투를 바꿉니다.
 
 ### 8. 외부 서비스 연동 (MCP)
 
-- **Google Calendar** — 일정 조회/생성/리마인더
-- **Notion** — 업무 로그 자동 기록
-- **GitHub** — PR, 이슈, 알림 모니터링
-- **Playwright** — 웹 자동화
-- **AppleScript** — macOS 제어
+Mr.Stack은 MCP(Model Context Protocol)를 통해 외부 서비스와 연동됩니다.
+**각 서비스는 선택 사항**이며, 연결하지 않아도 Mr.Stack의 핵심 기능은 정상 동작합니다.
+
+| 서비스 | 기능 | 필요한 세팅 |
+|--------|------|-------------|
+| **Google Calendar** | 일정 조회/생성/리마인더 | Google Cloud OAuth 2.0 설정 |
+| **Notion** | 업무 로그 자동 기록 | Notion Integration API 키 |
+| **GitHub** | PR, 이슈, 알림 모니터링 | `gh auth login` (CLI 인증) |
+| **Playwright** | 웹 자동화 | `npx playwright install` |
+| **AppleScript** | macOS 제어 | 접근성 권한 허용 |
+
+연결하지 않은 서비스의 스케줄 작업은 자동으로 건너뜁니다 (에러 없음).
 
 ---
 
@@ -223,9 +230,13 @@ Mr.Stack은 지금 내 상태에 맞게 말투를 바꿉니다.
 
 ## 설치
 
-### 1단계: 기반 봇 설치
+두 가지 방법 중 선택하세요:
 
-[claude-code-telegram 설치 가이드](https://github.com/nicepkg/claude-code-telegram)를 따라 기반 봇을 먼저 설치합니다.
+### 방법 A: 터미널에서 직접 설치
+
+#### 1단계: 기반 봇 설치
+
+[claude-code-telegram](https://github.com/nicepkg/claude-code-telegram)을 먼저 설치합니다.
 
 ```bash
 uv tool install claude-code-telegram
@@ -233,7 +244,7 @@ uv tool install claude-code-telegram
 
 `.env` 파일을 설정하고 봇이 정상 동작하는지 확인합니다.
 
-### 2단계: Mr.Stack 설치
+#### 2단계: Mr.Stack 설치
 
 ```bash
 git clone https://github.com/whynowlab/mrstack.git
@@ -249,7 +260,7 @@ cd mrstack
 - Telegram User ID를 물어보고 설정합니다
 - 메모리 디렉토리를 생성합니다
 
-### 3단계: 봇 재시작
+#### 3단계: 봇 재시작
 
 ```bash
 # launchd 데몬으로 실행 중이면:
@@ -260,15 +271,103 @@ launchctl start <your-service-name>
 # 프로세스 종료 후 다시 시작
 ```
 
-### 4단계: 확인
+#### 4단계: 확인
 
 ```bash
-# 헬스 체크 (API 서버 활성화된 경우)
-curl http://localhost:8080/health
+curl http://localhost:8080/health   # API 서버 활성화된 경우
 ```
 
 텔레그램에서 봇에게 아무 메시지를 보내보세요.
 `/jarvis` — 상태 확인 | `/coach` — 코칭 리포트
+
+---
+
+### 방법 B: Claude Code로 설치
+
+Claude Code가 설치되어 있다면, 터미널에서 Claude Code를 열고 이렇게 말하세요:
+
+```
+github.com/whynowlab/mrstack 이 레포를 보고 Mr.Stack을 설치해줘.
+```
+
+Claude Code가 README와 install.sh를 읽고 설치 과정을 안내합니다.
+기반 봇(claude-code-telegram)이 아직 없다면 그것도 같이 설치해달라고 하면 됩니다.
+
+---
+
+### (선택) 외부 서비스 연동
+
+MCP 연동은 **선택 사항**입니다. 연결하지 않아도 Mr.Stack 핵심 기능은 전부 동작합니다.
+필요한 서비스만 골라서 설정하세요.
+
+<details>
+<summary><b>Google Calendar 연동</b></summary>
+
+1. [Google Cloud Console](https://console.cloud.google.com/)에서 프로젝트 생성
+2. Calendar API 활성화
+3. OAuth 2.0 클라이언트 ID 생성 (데스크톱 앱)
+4. `client_id`와 `client_secret`을 MCP 설정에 추가
+5. `mcp-config.json`에 Google Calendar 서버 등록:
+```json
+{
+  "mcpServers": {
+    "google-calendar": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-google-calendar"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "your-client-id",
+        "GOOGLE_CLIENT_SECRET": "your-client-secret"
+      }
+    }
+  }
+}
+```
+6. `.env`에 MCP 활성화:
+```bash
+ENABLE_MCP=true
+MCP_CONFIG_PATH=/path/to/mcp-config.json
+```
+</details>
+
+<details>
+<summary><b>Notion 연동</b></summary>
+
+1. [Notion Integrations](https://www.notion.so/my-integrations)에서 새 통합 생성
+2. Internal Integration Token 복사
+3. 연동할 Notion 데이터베이스에서 "연결" → 방금 만든 통합 추가
+4. `mcp-config.json`에 추가:
+```json
+{
+  "mcpServers": {
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-notion"],
+      "env": {
+        "NOTION_API_KEY": "ntn_your_api_key"
+      }
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>GitHub 연동</b></summary>
+
+가장 간단합니다. 터미널에서:
+```bash
+gh auth login
+```
+이것만 하면 Mr.Stack이 `gh` CLI를 통해 GitHub 알림, PR, 이슈를 확인합니다.
+</details>
+
+<details>
+<summary><b>Playwright 연동 (웹 자동화)</b></summary>
+
+```bash
+npx playwright install chromium
+```
+</details>
 
 ---
 
