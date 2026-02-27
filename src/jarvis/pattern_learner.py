@@ -138,6 +138,58 @@ class PatternLearner:
             "total": len(records),
         }
 
+    def update_routines(self, days: int = 14) -> None:
+        """Analyze interactions and auto-generate routines.json.
+
+        Detects recurring (day_of_week, hour, request_type) combos.
+        Called by memory-sync or a dedicated scheduled job.
+        """
+        records = self._load_records(
+            cutoff=datetime.now() - timedelta(days=days)
+        )
+        if len(records) < 20:
+            return  # Not enough data
+
+        # Count (dow, hour, type) triples
+        combos: Counter[tuple[str, int, str]] = Counter()
+        dow_hour_total: Counter[tuple[str, int]] = Counter()
+
+        for rec in records:
+            dow = rec.get("dow", "")
+            hour = rec.get("hour", 0)
+            rtype = rec.get("request_type", DEFAULT_TYPE)
+            combos[(dow, hour, rtype)] += 1
+            dow_hour_total[(dow, hour)] += 1
+
+        # How many unique weeks in the data?
+        weeks = max(1, days // 7)
+
+        routines = []
+        for (dow, hour, rtype), count in combos.most_common(20):
+            # confidence = occurrences / weeks (capped at 1.0)
+            confidence = round(min(count / weeks, 1.0), 2)
+            if confidence < 0.5:
+                continue
+            routines.append({
+                "pattern": f"{dow} {hour}:00",
+                "request_type": rtype,
+                "confidence": confidence,
+                "count": count,
+            })
+
+        if not routines:
+            return
+
+        try:
+            self.routines_path.write_text(
+                json.dumps({"routines": routines, "updated": datetime.now().isoformat()},
+                           ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("Routines updated", count=len(routines))
+        except Exception:
+            logger.exception("Failed to write routines.json")
+
     def check_preemptive(
         self, state: ContextState, hour: int
     ) -> Optional[dict[str, Any]]:

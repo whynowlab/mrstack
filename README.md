@@ -1,8 +1,22 @@
 # Mr.Stack
 
-> 매일 쌓이는 대화가 경험이 되는 AI 파트너.
+> Claude Code + Telegram = 24시간 상시 대기 AI 개발 파트너.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![macOS](https://img.shields.io/badge/macOS-Ventura%20%7C%20Sonoma%20%7C%20Sequoia-black.svg)](https://apple.com/macos)
+
+**맥북 상태를 관찰하고 | 대화를 기억하고 | 작업 패턴을 학습하고 | 먼저 말을 거는** AI 파트너.
+
+### Quick Start
+
+```bash
+git clone https://github.com/whynowlab/mrstack.git
+cd mrstack && ./install.sh
+# 텔레그램에서 봇에게 아무 메시지를 보내보세요
+```
+
+> 사전 준비: [claude-code-telegram](https://github.com/nicepkg/claude-code-telegram) + Telegram 봇 토큰 ([상세 안내 ↓](#준비물))
 
 ---
 
@@ -15,7 +29,11 @@
 
 > 일반 AI 비서는 비서실에 앉아서 호출을 기다리는 사람입니다.
 > Mr.Stack은 **당신 옆에 앉아서 같은 화면을 보고 있는 시니어 동료**에 가깝습니다.
-> 맥북 상태를 관찰하고, 대화를 기억하고, 작업 패턴을 학습하고, 필요할 때 먼저 말을 겁니다.
+
+핵심 3가지:
+- **선제적 알림** — 5분마다 맥북을 스캔하고, 필요할 때 먼저 텔레그램으로 말을 겁니다
+- **영구 기억** — 대화를 기억하고, 다음 세션에서 맥락을 이어갑니다
+- **패턴 학습** — 작업 습관을 분석하고, 매일 밤 데이터 기반 코칭을 보내줍니다
 
 ---
 
@@ -557,4 +575,4 @@ MIT
 
 ---
 
-*[English version →](docs/README_EN.md)*
+*English version coming soon.*

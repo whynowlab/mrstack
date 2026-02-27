@@ -58,6 +58,7 @@ _TRIGGER_COOLDOWNS: Dict[str, int] = {
     "context_switch_overload": 1800, # 30 min
     "terminal_error": 600,          # 10 min
     "stuck_detection": 3600,        # 1 hour
+    "preemptive_routine": 7200,     # 2 hours
 }
 
 
@@ -95,10 +96,12 @@ class ContextEngine:
         event_bus: EventBus,
         target_chat_ids: List[int],
         working_directory: str = "",
+        pattern_learner: Any = None,
     ) -> None:
         self.event_bus = event_bus
         self.target_chat_ids = target_chat_ids
         self.working_directory = working_directory
+        self._pattern_learner = pattern_learner
 
         self._running = False
         self._enabled = True  # Always-on when engine is started
@@ -441,5 +444,20 @@ class ContextEngine:
                         f"30분 이상 같은 브랜치({snap.git_branch})에서 "
                         f"커밋 없이 작업 중입니다. 막히신 부분이 있나요?",
                     ))
+
+        # 8. Preemptive routine (learned pattern)
+        if self._pattern_learner and _cooled("preemptive_routine"):
+            from datetime import datetime as _dt
+
+            routine = self._pattern_learner.check_preemptive(
+                self._current_state, _dt.now().hour
+            )
+            if routine:
+                rtype = routine.get("request_type", "")
+                triggers.append((
+                    "preemptive_routine",
+                    f"이 시간대에 보통 '{rtype}' 유형의 작업을 하시더라고요. "
+                    f"미리 준비할 게 있을까요?",
+                ))
 
         return triggers

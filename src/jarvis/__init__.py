@@ -44,12 +44,13 @@ class JarvisEngine:
             working_directory = str(Path.home())
         if not memory_base:
             memory_base = str(Path.home() / "claude-telegram" / "memory")
+        self.pattern_learner = PatternLearner(memory_base)
         self.context_engine = ContextEngine(
             event_bus=event_bus,
             target_chat_ids=target_chat_ids,
             working_directory=working_directory,
+            pattern_learner=self.pattern_learner,
         )
-        self.pattern_learner = PatternLearner(memory_base)
         self.coach = DailyCoach(memory_base)
         self.persona = PersonaLayer()
 
