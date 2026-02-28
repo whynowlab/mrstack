@@ -405,8 +405,176 @@ PYEOF
     fi
 fi
 
-# ── Step 7: Configure .env ──
-step "Configuring .env..."
+# ── Step 7: Patch model routing (Sonnet/Haiku for scheduled jobs) ──
+step "Patching model routing into pipeline..."
+
+# 7a: ScheduledEvent — add model field
+EVENTS_TYPES="$SRC/events/types.py"
+if grep -q 'model: Optional' "$EVENTS_TYPES" 2>/dev/null; then
+    info "ScheduledEvent.model already present — skipping"
+else
+    sed -i.bak 's/skill_name: Optional\[str\] = None/skill_name: Optional[str] = None\n    model: Optional[str] = None/' "$EVENTS_TYPES"
+    rm -f "$EVENTS_TYPES.bak"
+    info "Added model field to ScheduledEvent"
+fi
+
+# 7b: scheduler.py — pass model through _fire_event and _load_jobs_from_db
+SCHEDULER="$SRC/scheduler/scheduler.py"
+if grep -q 'model: Optional' "$SCHEDULER" 2>/dev/null; then
+    info "Scheduler model routing already present — skipping"
+else
+    cat > /tmp/mrstack_scheduler_patch.py << 'PYEOF'
+with open("SCHED_FILE", "r") as f:
+    content = f.read()
+
+# Patch _fire_event signature
+content = content.replace(
+    "skill_name: Optional[str],\n    ) -> None:",
+    "skill_name: Optional[str],\n        model: Optional[str] = None,\n    ) -> None:"
+)
+
+# Patch ScheduledEvent constructor in _fire_event
+content = content.replace(
+    "skill_name=skill_name,\n        )\n\n        logger.info(\n            \"Scheduled job fired\",",
+    "skill_name=skill_name,\n            model=model,\n        )\n\n        logger.info(\n            \"Scheduled job fired\","
+)
+
+# Patch _load_jobs_from_db kwargs
+content = content.replace(
+    '"skill_name": row_dict.get("skill_name"),\n                        },',
+    '"skill_name": row_dict.get("skill_name"),\n                            "model": row_dict.get("model"),\n                        },'
+)
+
+with open("SCHED_FILE", "w") as f:
+    f.write(content)
+PYEOF
+    sed -i '' "s|SCHED_FILE|$SCHEDULER|g" /tmp/mrstack_scheduler_patch.py
+    python3 /tmp/mrstack_scheduler_patch.py
+    rm -f /tmp/mrstack_scheduler_patch.py
+    info "Patched scheduler for model routing"
+fi
+
+# 7c: handlers.py — pass model to run_command
+HANDLERS="$SRC/events/handlers.py"
+if grep -q 'model=event.model' "$HANDLERS" 2>/dev/null; then
+    info "Handler model passthrough already present — skipping"
+else
+    sed -i.bak 's/user_id=self.default_user_id,\n            )/user_id=self.default_user_id,\n                model=event.model,\n            )/' "$HANDLERS"
+    # If sed didn't work (multiline), use python
+    if ! grep -q 'model=event.model' "$HANDLERS"; then
+        python3 -c "
+with open('$HANDLERS', 'r') as f:
+    content = f.read()
+content = content.replace(
+    'user_id=self.default_user_id,\n            )',
+    'user_id=self.default_user_id,\n                model=event.model,\n            )',
+    1  # Only replace in handle_scheduled, not handle_webhook
+)
+with open('$HANDLERS', 'w') as f:
+    f.write(content)
+"
+    fi
+    rm -f "$HANDLERS.bak"
+    info "Patched handler to pass model"
+fi
+
+# 7d: facade.py — add model param to run_command and _execute
+FACADE="$SRC/claude/facade.py"
+if grep -q 'model: Optional\[str\]' "$FACADE" 2>/dev/null; then
+    info "Facade model param already present — skipping"
+else
+    python3 -c "
+with open('$FACADE', 'r') as f:
+    content = f.read()
+
+# Add model param to run_command
+content = content.replace(
+    'force_new: bool = False,\n    ) -> ClaudeResponse:',
+    'force_new: bool = False,\n        model: Optional[str] = None,\n    ) -> ClaudeResponse:'
+)
+
+# Pass model to _execute (both calls)
+content = content.replace(
+    'stream_callback=stream_handler,\n                )\n            except Exception as resume_error:',
+    'stream_callback=stream_handler,\n                    model=model,\n                )\n            except Exception as resume_error:'
+)
+content = content.replace(
+    'stream_callback=stream_handler,\n                    )\n                else:',
+    'stream_callback=stream_handler,\n                        model=model,\n                    )\n                else:'
+)
+
+# Add model param to _execute
+content = content.replace(
+    'stream_callback: Optional[Callable] = None,\n    ) -> ClaudeResponse:\n        \"\"\"Execute command via SDK.\"\"\"\n        return await self.sdk_manager.execute_command(',
+    'stream_callback: Optional[Callable] = None,\n        model: Optional[str] = None,\n    ) -> ClaudeResponse:\n        \"\"\"Execute command via SDK.\"\"\"\n        return await self.sdk_manager.execute_command('
+)
+
+# Pass model in _execute body
+content = content.replace(
+    'stream_callback=stream_callback,\n        )',
+    'stream_callback=stream_callback,\n            model=model,\n        )'
+)
+
+with open('$FACADE', 'w') as f:
+    f.write(content)
+"
+    info "Patched facade for model routing"
+fi
+
+# 7e: sdk_integration.py — add model to execute_command and ClaudeAgentOptions
+SDK="$SRC/claude/sdk_integration.py"
+if grep -q 'model=model' "$SDK" 2>/dev/null; then
+    info "SDK model param already present — skipping"
+else
+    python3 -c "
+with open('$SDK', 'r') as f:
+    content = f.read()
+
+# Add model param to execute_command
+content = content.replace(
+    'stream_callback: Optional[Callable[[StreamUpdate], None]] = None,\n    ) -> ClaudeResponse:',
+    'stream_callback: Optional[Callable[[StreamUpdate], None]] = None,\n        model: Optional[str] = None,\n    ) -> ClaudeResponse:'
+)
+
+# Add model to ClaudeAgentOptions
+content = content.replace(
+    'cli_path=cli_path,\n                sandbox=',
+    'cli_path=cli_path,\n                model=model,\n                sandbox='
+)
+
+with open('$SDK', 'w') as f:
+    f.write(content)
+"
+    info "Patched SDK for model routing"
+fi
+
+# 7f: Add model column to DB if not exists
+step "Adding model column to database..."
+
+# Find bot.db
+BOT_DB=""
+for candidate in \
+    "$HOME/claude-telegram/data/bot.db" \
+    "$BOT_DIR/data/bot.db"; do
+    if [[ -f "$candidate" ]]; then
+        BOT_DB="$candidate"
+        break
+    fi
+done
+
+if [[ -n "$BOT_DB" ]]; then
+    if sqlite3 "$BOT_DB" "PRAGMA table_info(scheduled_jobs);" | grep -q "model"; then
+        info "model column already exists"
+    else
+        sqlite3 "$BOT_DB" "ALTER TABLE scheduled_jobs ADD COLUMN model TEXT DEFAULT NULL;"
+        info "Added model column to scheduled_jobs"
+    fi
+else
+    warn "Could not find bot.db — model column will be created on first run"
+fi
+
+# ── Step 8: Configure .env ──
+step "Configuring environment..."
 
 # Find .env file
 ENV_FILE=""
@@ -464,7 +632,7 @@ else
     echo "  NOTIFICATION_CHAT_IDS=<your_telegram_user_id>"
 fi
 
-# ── Step 8: Create memory directory ──
+# ── Step 9: Create memory directory ──
 step "Setting up memory directory..."
 
 MEMORY_DIR="$HOME/claude-telegram/memory/patterns"
