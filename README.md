@@ -8,15 +8,32 @@
 
 **맥북 상태를 관찰하고 | 대화를 기억하고 | 작업 패턴을 학습하고 | 먼저 말을 거는** AI 파트너.
 
-### Quick Start
+### 처음이세요? 3단계면 됩니다
 
+> Claude Code가 설치된 맥북 + 텔레그램 계정만 있으면 시작할 수 있습니다.
+
+**1단계: 텔레그램 봇 만들기** (2분)
+- 텔레그램에서 [@BotFather](https://t.me/botfather) 검색 → `/newbot` → 이름 입력 → **토큰** 저장
+- [@userinfobot](https://t.me/userinfobot)에게 아무 말 → **내 ID** 저장
+
+**2단계: 설치** (5분)
 ```bash
+# 기반 봇 설치
+uv tool install claude-code-telegram
+
+# Mr.Stack 설치
 git clone https://github.com/whynowlab/mrstack.git
 cd mrstack && ./install.sh
-# 텔레그램에서 봇에게 아무 메시지를 보내보세요
+# → 토큰과 ID를 물어봅니다. 1단계에서 저장한 값을 입력하세요.
 ```
 
-> 사전 준비: [claude-code-telegram](https://github.com/nicepkg/claude-code-telegram) + Telegram 봇 토큰 ([상세 안내 ↓](#준비물))
+**3단계: 시작**
+```bash
+claude-telegram-bot   # 봇 실행
+```
+텔레그램에서 내 봇에게 **아무 메시지**를 보내보세요. 응답이 오면 성공입니다.
+
+> 더 자세한 설치 방법, 데몬 등록, 외부 서비스 연동은 [아래 설치 섹션](#설치)을 참고하세요.
 
 ---
 
@@ -438,6 +455,38 @@ npx playwright install chromium
 - 외부 서버 전송 없음. 클라우드 없음. 텔레메트리 없음. **zero-trust architecture.**
 - 시스템 스냅샷은 in-memory로 5분마다 갱신, 디스크에 영구 저장하지 않음
 - Claude API 호출은 트리거 발동 시에만 (시간당 최대 10회, rate-limited)
+
+---
+
+## 보안 & 권한 관리
+
+Mr.Stack은 Claude Code를 텔레그램에서 원격 실행하기 때문에 **다중 보안 레이어**가 적용됩니다.
+
+### 사용자 인증
+- `.env`의 `ALLOWED_USERS`에 **허용된 Telegram User ID만** 등록
+- 등록되지 않은 사용자의 메시지는 완전 무시 (로그도 남기지 않음)
+
+### Sandbox 모드
+- Claude가 실행하는 모든 명령은 **sandbox 안에서** 동작
+- 파일 접근은 `APPROVED_DIRECTORY` 범위로 제한
+- 디렉토리 탈출 시도 자동 차단
+
+### Quality Gate (위험 명령 차단)
+- `rm -rf /`, `sudo`, `curl | sh` 등 **파괴적 명령을 사전 차단**
+- Claude Code의 Hook 시스템(PreToolUse)으로 실행 전에 검증
+- 차단된 명령은 경고 메시지와 함께 사용자에게 알림
+
+### 도구 제한
+- `allowed_tools` / `disallowed_tools`로 Claude가 사용할 수 있는 도구 제어 가능
+- 기본값: 모든 도구 허용. 필요 시 `.env`에서 제한 설정
+
+### Rate Limiting
+- 분당 / 시간당 요청 제한으로 API 과다 호출 방지
+- `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW`로 조절
+
+### 긴 응답 처리
+- Claude의 응답이 Telegram 메시지 제한(4096자)을 초과하면 **자동 분할**
+- 코드 블록, 인용문 등 HTML 태그 상태를 추적하며 깨지지 않게 분리
 
 ---
 
