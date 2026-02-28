@@ -199,6 +199,21 @@ Mr.Stack connects to external services via MCP (Model Context Protocol).
 
 Jobs for unconnected services are automatically skipped (no errors).
 
+### 9. Claude HUD — Real-Time Usage Monitor
+
+A **real-time status bar (HUD)** is displayed at the top of your Claude Code terminal.
+Usage data is fetched directly from the Anthropic API, so it's always accurate.
+
+Displays:
+- **Model name** — Currently active Claude model
+- **Context usage** — Context window utilization
+- **Plan usage** — Usage percentage on 5-hour / 7-day windows
+- **Tool activity** — Currently running tool status
+- **Agent status** — Active agent information
+- **Todo progress** — Task list completion rate
+
+`install.sh` automatically installs and configures the HUD. No extra setup needed.
+
 ---
 
 ## How Is This Different?

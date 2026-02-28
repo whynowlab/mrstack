@@ -689,6 +689,81 @@ MEMORY_DIR="$HOME/claude-telegram/memory/patterns"
 mkdir -p "$MEMORY_DIR"
 info "Created $MEMORY_DIR"
 
+# ── Step 11: Claude HUD (optional) ──
+step "Setting up Claude HUD statusline..."
+
+# Check if Node.js is available
+NODE_PATH=$(command -v node 2>/dev/null)
+if [[ -z "$NODE_PATH" ]]; then
+    warn "Node.js not found — skipping Claude HUD setup"
+    warn "Install Node.js 18+ and re-run to enable HUD"
+else
+    HUD_DIR="$HOME/.claude/plugins/cache/claude-hud"
+    if [[ -d "$HUD_DIR/dist" ]]; then
+        info "Claude HUD already installed"
+    else
+        info "Installing Claude HUD..."
+        git clone https://github.com/jarrodwatts/claude-hud.git "$HUD_DIR" 2>/dev/null || true
+        if [[ -d "$HUD_DIR" ]]; then
+            cd "$HUD_DIR" && npm install --silent 2>/dev/null
+            cd "$SCRIPT_DIR"
+            info "Claude HUD installed"
+        else
+            warn "Failed to clone Claude HUD — skipping"
+        fi
+    fi
+
+    # Configure statusline in settings.json
+    if [[ -d "$HUD_DIR/dist" ]]; then
+        SETTINGS_JSON="$HOME/.claude/settings.json"
+        HUD_CMD="bash -c '\"$NODE_PATH\" \"\$HOME/.claude/plugins/cache/claude-hud/dist/index.js\"'"
+
+        if [[ -f "$SETTINGS_JSON" ]]; then
+            if grep -q "claude-hud" "$SETTINGS_JSON" 2>/dev/null; then
+                info "Claude HUD statusline already configured"
+            else
+                # Use python to safely merge JSON
+                python3 -c "
+import json
+with open('$SETTINGS_JSON', 'r') as f:
+    settings = json.load(f)
+settings['statusLine'] = {
+    'type': 'command',
+    'command': '''$HUD_CMD'''
+}
+with open('$SETTINGS_JSON', 'w') as f:
+    json.dump(settings, f, indent=2)
+"
+                info "Claude HUD statusline configured"
+            fi
+        else
+            mkdir -p "$(dirname "$SETTINGS_JSON")"
+            echo "{\"statusLine\":{\"type\":\"command\",\"command\":\"$HUD_CMD\"}}" | python3 -m json.tool > "$SETTINGS_JSON"
+            info "Created settings.json with Claude HUD"
+        fi
+
+        # Create HUD config
+        HUD_CONFIG_DIR="$HOME/.claude/plugins/claude-hud"
+        mkdir -p "$HUD_CONFIG_DIR"
+        if [[ ! -f "$HUD_CONFIG_DIR/config.json" ]]; then
+            cat > "$HUD_CONFIG_DIR/config.json" << 'HUDEOF'
+{
+  "lineLayout": "expanded",
+  "display": {
+    "showModel": true,
+    "showContextBar": true,
+    "showUsage": true,
+    "showTools": true,
+    "showAgents": true,
+    "showTodos": true
+  }
+}
+HUDEOF
+            info "Created HUD config"
+        fi
+    fi
+fi
+
 # ── Done ──
 echo ""
 echo -e "${BOLD}${GREEN}═══════════════════════════════════════${NC}"
@@ -700,6 +775,7 @@ echo "  1. Restart your bot"
 echo "  2. Mr.Stack is ON by default — no manual activation needed"
 echo "  3. Send /jarvis to pause/resume"
 echo "  4. Send /coach for a coaching report"
+echo "  5. Claude Code statusline shows real-time usage (Claude HUD)"
 echo ""
 echo -e "${YELLOW}[!] Scheduled jobs (morning briefing, coaching, etc.) need registration.${NC}"
 echo "    If you have register-jobs.py, run it now:"
