@@ -90,7 +90,14 @@ class AgenticKeyboards:
         if not content:
             return None
 
-        tools = set(tools_used or [])
+        tools = set()
+        for t in (tools_used or []):
+            if isinstance(t, dict):
+                name = t.get("name")
+                if name:
+                    tools.add(name)
+            elif isinstance(t, str):
+                tools.add(t)
         content_lower = content.lower()
 
         # Code changes detected
