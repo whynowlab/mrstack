@@ -573,7 +573,57 @@ else
     warn "Could not find bot.db — model column will be created on first run"
 fi
 
-# ── Step 8: Configure .env ──
+# ── Step 8: Patch headless mode (block interactive tools) ──
+step "Configuring headless mode..."
+
+SDK="$SRC/claude/sdk_integration.py"
+if grep -q 'headless remote bot' "$SDK" 2>/dev/null; then
+    info "Headless mode already configured — skipping"
+else
+    python3 -c "
+with open('$SDK', 'r') as f:
+    content = f.read()
+
+content = content.replace(
+    'f\"All file operations must stay within {working_directory}. \"'
+    '\n                    \"Use relative paths.\"',
+    'f\"All file operations must stay within {working_directory}. \"'
+    '\n                    \"Use relative paths. \"'
+    '\n                    \"IMPORTANT: You are running as a headless remote bot via Telegram. \"'
+    '\n                    \"There is no human at the terminal to approve interactive prompts. \"'
+    '\n                    \"NEVER use interactive tools: EnterPlanMode, ExitPlanMode, AskUserQuestion, Skill. \"'
+    '\n                    \"Do NOT ask clarifying questions — make reasonable assumptions and proceed. \"'
+    '\n                    \"Do NOT enter plan mode — just execute the task directly.\"'
+)
+
+with open('$SDK', 'w') as f:
+    f.write(content)
+"
+    info "Patched system prompt for headless mode"
+fi
+
+# Add interactive tools to disallowed list
+SETTINGS="$SRC/config/settings.py"
+if grep -q 'EnterPlanMode' "$SETTINGS" 2>/dev/null; then
+    info "Interactive tools already in disallowed list — skipping"
+else
+    python3 -c "
+with open('$SETTINGS', 'r') as f:
+    content = f.read()
+
+content = content.replace(
+    'claude_disallowed_tools: Optional[List[str]] = Field(\n        default=[],',
+    'claude_disallowed_tools: Optional[List[str]] = Field(\n        default=[\n            \"EnterPlanMode\",\n            \"ExitPlanMode\",\n            \"AskUserQuestion\",\n            \"Skill\",\n            \"EnterWorktree\",\n        ],'
+)
+
+with open('$SETTINGS', 'w') as f:
+    f.write(content)
+"
+    info "Added interactive tools to disallowed list"
+fi
+
+# ── Step 9: Configure .env ──
+
 step "Configuring environment..."
 
 # Find .env file
@@ -632,7 +682,7 @@ else
     echo "  NOTIFICATION_CHAT_IDS=<your_telegram_user_id>"
 fi
 
-# ── Step 9: Create memory directory ──
+# ── Step 10: Create memory directory ──
 step "Setting up memory directory..."
 
 MEMORY_DIR="$HOME/claude-telegram/memory/patterns"
