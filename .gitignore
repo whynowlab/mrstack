@@ -11,3 +11,7 @@ venv/
 *.jsonl
 *.db
 .DS_Store
+node_modules/
+scrapers/threads/output/
+session/
+logs/

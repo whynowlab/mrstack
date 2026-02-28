@@ -1,0 +1,22 @@
+{
+  "cookiePath": "../../session/threads-cookies.json",
+  "scrollCount": 50,
+  "delayMin": 1000,
+  "delayMax": 3000,
+  "aiKeywords": [
+    "AI", "artificial intelligence", "LLM", "GPT", "Claude",
+    "Gemini", "machine learning", "deep learning", "neural",
+    "transformer", "diffusion", "AGI", "OpenAI", "Anthropic",
+    "Google AI", "Meta AI", "open source model", "fine-tune",
+    "RAG", "agent", "MCP", "prompt engineering",
+    "인공지능", "언어모델", "파인튜닝", "프롬프트"
+  ],
+  "categories": {
+    "model-release": ["출시", "release", "launch", "announce", "new model", "업데이트", "update", "version"],
+    "tool": ["tool", "도구", "app", "platform", "서비스", "service", "plugin", "extension", "MCP", "SDK"],
+    "tip": ["tip", "팁", "trick", "how to", "방법", "workflow", "prompt", "프롬프트", "tutorial"],
+    "news": ["funding", "투자", "acquisition", "인수", "regulation", "규제", "partnership", "제휴", "billion", "million"],
+    "research": ["paper", "논문", "research", "연구", "benchmark", "벤치마크", "arxiv", "study"],
+    "opinion": ["think", "생각", "opinion", "의견", "debate", "토론", "future", "미래", "replace", "대체"]
+  }
+}

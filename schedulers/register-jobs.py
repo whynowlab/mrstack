@@ -5,9 +5,11 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-DB_PATH = "/Users/dd/claude-telegram/data/bot.db"
-CHAT_ID = "5334508958"
-WORKING_DIR = "/Users/dd"
+import os
+
+DB_PATH = os.path.expanduser("~/claude-telegram/data/bot.db")
+CHAT_ID = os.environ.get("NOTIFICATION_CHAT_IDS", "YOUR_CHAT_ID")
+WORKING_DIR = os.path.expanduser("~")
 
 # Model routing:
 #   "sonnet" — simple lookups, status checks, no creative work
