@@ -1,9 +1,11 @@
 """Command handlers for bot operations."""
 
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+import httpx
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -43,6 +45,87 @@ def _is_private_chat(update: Update) -> bool:
     """Return True when update is from a private chat."""
     chat = update.effective_chat
     return bool(chat and getattr(chat, "type", "") == "private")
+
+
+def _read_oauth_token() -> Optional[str]:
+    """Read Claude OAuth token from macOS Keychain via Swift subprocess."""
+    try:
+        swift_code = """
+import Foundation
+import Security
+let q: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrService as String: "Claude Code-credentials",
+    kSecReturnData as String: true,
+    kSecMatchLimit as String: kSecMatchLimitOne
+]
+var r: AnyObject?
+guard SecItemCopyMatching(q as CFDictionary, &r) == errSecSuccess,
+      let d = r as? Data, let s = String(data: d, encoding: .utf8) else { exit(1) }
+if let range = s.range(of: "sk-ant-oat01-[A-Za-z0-9_-]+", options: .regularExpression) {
+    print(s[range])
+}
+"""
+        result = subprocess.run(
+            ["swift", "-"],
+            input=swift_code,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        token = result.stdout.strip()
+        if token and token.startswith("sk-ant-oat01-"):
+            return token
+        return None
+    except Exception:
+        return None
+
+
+async def _get_claude_usage() -> Optional[dict[str, Any]]:
+    """Fetch Claude Code plan usage from Anthropic OAuth API."""
+    try:
+        token = _read_oauth_token()
+        if not token:
+            logger.warning("Failed to read OAuth token from Keychain")
+            return None
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.warning("Failed to fetch Claude usage", error=str(e))
+        return None
+
+
+def _format_usage_bar(utilization_pct: float, width: int = 10) -> str:
+    """Format a utilization percentage (0-100) as a progress bar."""
+    filled = round(utilization_pct / 100 * width)
+    filled = max(0, min(width, filled))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _format_reset_time(resets_at: str) -> str:
+    """Format ISO reset time as human-readable remaining duration."""
+    try:
+        reset_dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delta = reset_dt - now
+        if delta.total_seconds() <= 0:
+            return "곧 리셋"
+        hours = int(delta.total_seconds() // 3600)
+        minutes = int((delta.total_seconds() % 3600) // 60)
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+    except Exception:
+        return resets_at
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1361,10 +1444,39 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             all_cost = all_row[0] if all_row else 0.0
             all_msgs = all_row[1] if all_row else 0
 
+        # --- Fetch Claude Code plan usage (non-blocking) ---
+        claude_usage = await _get_claude_usage()
+
         # --- Build message ---
         lines = []
         lines.append("📊 <b>사용량 리포트</b>")
         lines.append("")
+
+        # Claude Code Plan
+        if claude_usage:
+            lines.append("━━━ ⚡ <b>Claude Code 플랜</b> ━━━")
+            lines.append("📋 플랜: <b>Max (5x)</b>")
+
+            five = claude_usage.get("five_hour") or {}
+            seven = claude_usage.get("seven_day") or {}
+
+            if five:
+                pct5 = five.get("utilization", 0)
+                bar5 = _format_usage_bar(pct5)
+                reset5 = _format_reset_time(five.get("resets_at", ""))
+                lines.append(
+                    f"🕐 5시간: <code>{bar5}</code> <b>{pct5:.0f}%</b> (리셋: {reset5})"
+                )
+
+            if seven:
+                pct7 = seven.get("utilization", 0)
+                bar7 = _format_usage_bar(pct7)
+                reset7 = _format_reset_time(seven.get("resets_at", ""))
+                lines.append(
+                    f"📅 7일간: <code>{bar7}</code> <b>{pct7:.0f}%</b> (리셋: {reset7})"
+                )
+
+            lines.append("")
 
         # Today
         lines.append("━━━ 📅 <b>오늘</b> ━━━")
