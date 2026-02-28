@@ -575,4 +575,4 @@ MIT
 
 ---
 
-*English version coming soon.*
+*[English version →](README.en.md)*
