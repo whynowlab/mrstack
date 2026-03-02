@@ -32,6 +32,7 @@ jobs:
           generate_release_notes: true
 
       - name: Update Homebrew Formula
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
