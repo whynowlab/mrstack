@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mrstack"
-version = "1.1.0"
+version = "1.1.1"
 description = "Proactive AI Butler for Claude Code — Telegram Bot with Memory, Jarvis Mode, and Daily Coaching"
 readme = "README.en.md"
 license = "MIT"
