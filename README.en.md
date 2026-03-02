@@ -9,6 +9,7 @@
 Claude Code + Telegram = Your 24/7 AI development partner
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI](https://img.shields.io/pypi/v/mrstack.svg)](https://pypi.org/project/mrstack/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![macOS](https://img.shields.io/badge/macOS-Ventura%20%7C%20Sonoma%20%7C%20Sequoia-black.svg)](https://apple.com/macos)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram)](https://t.me/botfather)
@@ -20,12 +21,39 @@ Claude Code + Telegram = Your 24/7 AI development partner
 ### Quick Start
 
 ```bash
-git clone https://github.com/whynowlab/mrstack.git
-cd mrstack && ./install.sh
-# Send any message to your bot on Telegram
+# Install (pick one)
+uv tool install mrstack    # recommended
+pip install mrstack         # alternative
+# git clone https://github.com/whynowlab/mrstack.git && pip install -e .
+
+# Setup & run
+mrstack init               # interactive setup wizard
+mrstack start              # start the bot
+# or: mrstack daemon       # register as background service
 ```
 
-> Prerequisites: [claude-code-telegram](https://github.com/nicepkg/claude-code-telegram) + Telegram bot token ([details below](#prerequisites))
+<details>
+<summary><b>All CLI commands</b></summary>
+
+```
+mrstack init          # Interactive setup wizard
+mrstack start         # Start bot (foreground)
+mrstack start --bg    # Start bot (background)
+mrstack stop          # Stop bot
+mrstack daemon        # Install system daemon (launchd/systemd)
+mrstack daemon -u     # Uninstall daemon
+mrstack status        # Show status
+mrstack logs [-f]     # View/follow logs
+mrstack config        # Edit .env configuration
+mrstack jarvis on/off # Toggle Jarvis mode
+mrstack patch         # Re-install Mr.Stack modules
+mrstack update        # Update to latest version
+mrstack version       # Show version info
+```
+
+</details>
+
+> Legacy install (`git clone && ./install.sh`) is still supported. See [Installation](#installation) for details.
 
 ---
 

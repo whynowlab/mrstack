@@ -5,6 +5,7 @@ dist/
 build/
 .eggs/
 *.egg
+*.whl
 .env
 .venv/
 venv/

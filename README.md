@@ -9,6 +9,7 @@
 Claude Code + Telegram = 24시간 상시 대기 AI 개발 파트너
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI](https://img.shields.io/pypi/v/mrstack.svg)](https://pypi.org/project/mrstack/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![macOS](https://img.shields.io/badge/macOS-Ventura%20%7C%20Sonoma%20%7C%20Sequoia-black.svg)](https://apple.com/macos)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram)](https://t.me/botfather)
@@ -17,32 +18,57 @@ Claude Code + Telegram = 24시간 상시 대기 AI 개발 파트너
 
 **맥북 상태를 관찰하고 | 대화를 기억하고 | 작업 패턴을 학습하고 | 먼저 말을 거는** AI 파트너.
 
-### 처음이세요? 3단계면 됩니다
+### 처음이세요? 2단계면 됩니다
 
 > Claude Code가 설치된 맥북 + 텔레그램 계정만 있으면 시작할 수 있습니다.
 
-**1단계: 텔레그램 봇 만들기** (2분)
-- 텔레그램에서 [@BotFather](https://t.me/botfather) 검색 → `/newbot` → 이름 입력 → **토큰** 저장
-- [@userinfobot](https://t.me/userinfobot)에게 아무 말 → **내 ID** 저장
+**1단계: 설치** (1분)
 
-**2단계: 설치** (5분)
 ```bash
-# 기반 봇 설치
-uv tool install claude-code-telegram
+# 방법 1: uv (권장)
+uv tool install mrstack
 
-# Mr.Stack 설치
+# 방법 2: pip
+pip install mrstack
+
+# 방법 3: git clone (고급)
 git clone https://github.com/whynowlab/mrstack.git
-cd mrstack && ./install.sh
-# → 토큰과 ID를 물어봅니다. 1단계에서 저장한 값을 입력하세요.
+cd mrstack && pip install -e .
 ```
 
-**3단계: 시작**
+**2단계: 설정 + 시작** (3분)
 ```bash
-claude-telegram-bot   # 봇 실행
+mrstack init          # 인터랙티브 설정 마법사
+mrstack start         # 봇 시작
+# 또는
+mrstack daemon        # 백그라운드 데몬으로 등록 + 시작
 ```
+설정 마법사가 텔레그램 봇 토큰, User ID를 물어봅니다.
 텔레그램에서 내 봇에게 **아무 메시지**를 보내보세요. 응답이 오면 성공입니다.
 
-> 더 자세한 설치 방법, 데몬 등록, 외부 서비스 연동은 [아래 설치 섹션](#설치)을 참고하세요.
+<details>
+<summary><b>mrstack CLI 전체 명령</b></summary>
+
+```
+mrstack init          # 인터랙티브 설정 마법사
+mrstack start         # 봇 시작 (foreground)
+mrstack start --bg    # 봇 시작 (background)
+mrstack stop          # 봇 중지
+mrstack daemon        # 시스템 데몬 등록 (launchd/systemd)
+mrstack daemon -u     # 데몬 해제
+mrstack status        # 현재 상태 표시
+mrstack logs          # 최근 로그 보기
+mrstack logs -f       # 로그 실시간 추적
+mrstack config        # .env 설정 편집
+mrstack jarvis on/off # Jarvis 모드 토글
+mrstack patch         # Mr.Stack 모듈 재설치
+mrstack update        # 최신 버전으로 업데이트
+mrstack version       # 버전 정보
+```
+
+</details>
+
+> 기존 방식(`git clone && ./install.sh`)도 여전히 지원합니다. 자세한 내용은 [설치 섹션](#설치)을 참고하세요.
 
 ---
 
