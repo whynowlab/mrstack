@@ -333,9 +333,9 @@ Claude reads the README and guides you through setup.
 
 | Platform | Support Level |
 |----------|--------------|
-| **macOS** (Ventura / Sonoma / Sequoia) | 100% — all features |
-| **Linux** | 95% — Jarvis active app/Chrome tab detection unavailable, everything else works |
-| **Windows** | 95% — works via WSL2, same as Linux |
+| **macOS** (Ventura / Sonoma / Sequoia) | 100% — all features + `daemon` for 24/7 background |
+| **Linux** | 95% — `daemon` supported. Jarvis active app/Chrome tab detection unavailable |
+| **Windows** | 80% — works via WSL2. No `daemon` yet (must keep terminal open) |
 
 | Requirement | Version |
 |-------------|---------|

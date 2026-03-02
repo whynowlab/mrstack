@@ -333,9 +333,9 @@ Claude가 README를 읽고 설치 과정을 안내합니다.
 
 | 플랫폼 | 지원 수준 |
 |--------|----------|
-| **macOS** (Ventura / Sonoma / Sequoia) | 100% — 모든 기능 |
-| **Linux** | 95% — Jarvis의 활성 앱/Chrome 탭 감지 제외, 나머지 정상 |
-| **Windows** | 95% — WSL2 환경에서 Linux와 동일하게 동작 |
+| **macOS** (Ventura / Sonoma / Sequoia) | 100% — 모든 기능 + `daemon`으로 24시간 상시 실행 |
+| **Linux** | 95% — `daemon` 지원. Jarvis 활성 앱/Chrome 탭 감지만 제외 |
+| **Windows** | 80% — WSL2에서 동작. `daemon` 미지원 (터미널 열어둬야 함) |
 
 | 요구사항 | 버전 |
 |----------|------|
