@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -41,6 +42,7 @@ def run_wizard() -> None:
 
     # Step 1: Check prerequisites
     _step("Checking prerequisites")
+    _check_python()
     _check_claude_code()
     _check_claude_telegram()
 
@@ -58,7 +60,7 @@ def run_wizard() -> None:
     jarvis_enabled = False
     if IS_MACOS:
         jarvis_enabled = Confirm.ask(
-            "Enable Jarvis mode? (proactive context engine, macOS only)",
+            "  Enable Jarvis mode? (proactive context engine, macOS only)",
             default=True,
         )
 
@@ -71,7 +73,7 @@ def run_wizard() -> None:
         patch_install(site_pkg, force=True)
     else:
         console.print(
-            "[yellow]claude-code-telegram not found. "
+            "  [yellow]claude-code-telegram not found. "
             "Overlay installation skipped.[/]"
         )
         console.print(
@@ -102,16 +104,39 @@ def _step(msg: str) -> None:
     console.print(f"\n[bold cyan]>[/] {msg}")
 
 
+def _check_python() -> None:
+    v = sys.version_info
+    if v >= (3, 11):
+        console.print(f"  [green]Python {v.major}.{v.minor}.{v.micro}[/] found")
+    else:
+        console.print(
+            f"  [red]Python {v.major}.{v.minor} detected — 3.11+ required.[/]"
+        )
+        console.print("  Install: [bold]brew install python[/] (macOS)")
+        raise SystemExit(1)
+
+
 def _check_claude_code() -> None:
     if shutil.which("claude"):
         console.print("  [green]Claude Code[/] found")
-    else:
-        console.print(
-            "  [yellow]Claude Code not found in PATH.[/]\n"
-            "  Install: [bold]npm install -g @anthropic-ai/claude-code[/]"
+        return
+
+    console.print("  [yellow]Claude Code not found.[/]")
+    console.print()
+    console.print(
+        Panel(
+            "[bold]Claude Code is required.[/]\n\n"
+            "Install it with:\n"
+            "  [bold cyan]npm install -g @anthropic-ai/claude-code[/]\n\n"
+            "You need a Claude Pro or Max subscription.\n"
+            "Sign up at: [bold]https://claude.ai[/]",
+            title="Missing: Claude Code",
+            border_style="yellow",
+            padding=(1, 2),
         )
-        if not Confirm.ask("Continue anyway?", default=True):
-            raise SystemExit(0)
+    )
+    if not Confirm.ask("  Continue without Claude Code?", default=False):
+        raise SystemExit(0)
 
 
 def _check_claude_telegram() -> None:
@@ -120,8 +145,8 @@ def _check_claude_telegram() -> None:
         return
 
     console.print(f"  [yellow]{CLAUDE_TELEGRAM_PKG} not found.[/]")
-    if Confirm.ask("Install it now?", default=True):
-        # Prefer uv, fallback to pip
+    if Confirm.ask("  Install it now? (takes ~30 seconds)", default=True):
+        console.print("  Installing... please wait.")
         if shutil.which("uv"):
             subprocess.run(
                 ["uv", "tool", "install", CLAUDE_TELEGRAM_PKG],
@@ -143,20 +168,30 @@ def _check_claude_telegram() -> None:
 
 
 def _ask_bot_token() -> str:
+    console.print()
     console.print(
-        "  Create a bot via [bold]@BotFather[/] on Telegram and paste the token."
+        Panel(
+            "[bold]How to get a bot token:[/]\n\n"
+            "1. Open Telegram and search for [bold cyan]@BotFather[/]\n"
+            "2. Send [bold]/newbot[/]\n"
+            "3. Enter a name (e.g. [dim]My Stack Bot[/])\n"
+            "4. Enter a username (e.g. [dim]my_stack_bot[/])\n"
+            "5. Copy the token below",
+            title="Telegram Bot Token",
+            border_style="cyan",
+            padding=(1, 2),
+        )
     )
     while True:
-        token = Prompt.ask("  Bot token").strip()
+        token = Prompt.ask("  Paste your bot token").strip()
         if not token:
             continue
         if ":" not in token:
-            console.print("  [red]Invalid token format. Expected: 123456:ABC-DEF...[/]")
+            console.print("  [red]Invalid format. Should look like: 1234567890:ABCdef...[/]")
             continue
-        # Validate via Telegram API
         if _validate_token(token):
             return token
-        console.print("  [red]Token validation failed. Check the token.[/]")
+        console.print("  [red]Token validation failed. Double-check and try again.[/]")
 
 
 def _validate_token(token: str) -> bool:
@@ -177,14 +212,23 @@ def _validate_token(token: str) -> bool:
 
 
 def _ask_user_id() -> str:
+    console.print()
     console.print(
-        "  Your Telegram user ID (send /start to @userinfobot to find it)."
+        Panel(
+            "[bold]How to find your User ID:[/]\n\n"
+            "1. Open Telegram and search for [bold cyan]@userinfobot[/]\n"
+            "2. Send any message\n"
+            "3. Copy the number it replies with",
+            title="Telegram User ID",
+            border_style="cyan",
+            padding=(1, 2),
+        )
     )
     while True:
-        uid = Prompt.ask("  User ID").strip()
+        uid = Prompt.ask("  Paste your User ID (number)").strip()
         if uid.isdigit():
             return uid
-        console.print("  [red]User ID must be a number.[/]")
+        console.print("  [red]Must be a number (e.g. 123456789)[/]")
 
 
 def _setup_directories() -> None:
