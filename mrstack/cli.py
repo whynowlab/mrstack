@@ -309,8 +309,9 @@ def update() -> None:
 @app.command(name="version")
 def version_cmd() -> None:
     """Show version information."""
-    from .banner import LOGO
+    from .banner import LOGO, STACK_ICON
 
+    console.print(STACK_ICON)
     console.print(LOGO)
 
     print_divider(console)
