@@ -31,13 +31,13 @@ console = Console()
 
 def run_wizard() -> None:
     """Run the interactive setup wizard."""
-    console.print(
-        Panel(
-            "[bold]Mr.Stack Setup Wizard[/]\n"
-            "This will configure your AI butler.",
-            border_style="cyan",
-        )
-    )
+    from .banner import print_banner, print_divider, status_icon
+
+    print_banner(console)
+    print_divider(console)
+    console.print("  [bold]Setup Wizard[/] — Let's configure your AI butler.")
+    print_divider(console)
+    console.print()
 
     # Step 1: Check prerequisites
     _step("Checking prerequisites")
@@ -85,17 +85,17 @@ def run_wizard() -> None:
 
     # Done
     console.print()
-    console.print(
-        Panel(
-            "[bold green]Setup complete![/]\n\n"
-            "  [bold]mrstack start[/]    — Start the bot (foreground)\n"
-            "  [bold]mrstack daemon[/]   — Start as background service\n"
-            "  [bold]mrstack status[/]   — Check status\n"
-            "  [bold]mrstack logs[/]     — View logs\n",
-            border_style="green",
-            title="Next Steps",
-        )
-    )
+    print_divider(console)
+    console.print()
+    console.print("  [green bold]Setup complete![/]")
+    console.print()
+    console.print(f"  {status_icon(True)} [bold]mrstack start[/]    Start the bot")
+    console.print(f"  {status_icon(True)} [bold]mrstack daemon[/]   Register as background service")
+    console.print(f"  {status_icon(True)} [bold]mrstack status[/]   Check status")
+    console.print(f"  {status_icon(True)} [bold]mrstack logs -f[/]  Follow logs")
+    console.print()
+    print_divider(console)
+    console.print()
 
 
 def _step(msg: str) -> None:

@@ -16,3 +16,4 @@ node_modules/
 scrapers/threads/output/
 session/
 logs/
+uv.lock

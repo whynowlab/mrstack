@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import time
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,12 +15,24 @@ from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
+from .banner import (
+    BRAND_CYAN,
+    BRAND_DIM,
+    BRAND_GREEN,
+    BRAND_MAGENTA,
+    COMPACT_LOGO,
+    print_banner,
+    print_divider,
+    status_icon,
+)
 from .constants import (
     BOT_COMMAND,
     DATA_DIR,
     DB_FILE,
     ENV_FILE,
+    IS_LINUX,
     IS_MACOS,
+    IS_WINDOWS,
     LOG_DIR,
     MEMORY_DIR,
     find_site_packages,
@@ -48,7 +60,7 @@ app = typer.Typer(
 # ── version ────────────────────────────────────────────
 def _version_callback(value: bool) -> None:
     if value:
-        console.print(f"Mr.Stack [bold]v{__version__}[/]")
+        print_banner(console, compact=True)
         raise typer.Exit()
 
 
@@ -77,8 +89,10 @@ def start(
     background: bool = typer.Option(False, "--bg", "-b", help="Run in background."),
 ) -> None:
     """Start the bot."""
+    print_banner(console, compact=True)
     if background:
         start_background()
+        _print_quick_status()
     else:
         start_foreground()
 
@@ -99,6 +113,7 @@ def daemon(
     if uninstall:
         daemon_uninstall()
     else:
+        print_banner(console, compact=True)
         daemon_install()
 
 
@@ -106,14 +121,20 @@ def daemon(
 @app.command()
 def status() -> None:
     """Show current status."""
+    print_banner(console, compact=True)
+    print_divider(console)
+
     pid = find_bot_pid()
     running = pid is not None
 
-    # Collect info
-    version_str = f"v{__version__}"
-    status_str = f"[green]Running (PID {pid})[/]" if running else "[red]Stopped[/]"
+    # Status
+    if running:
+        console.print(f"  {status_icon(True)} Status     [green bold]Running[/]  [dim](PID {pid})[/]")
+    else:
+        console.print(f"  {status_icon(False)} Status     [red bold]Stopped[/]")
 
-    uptime_str = "—"
+    # Uptime
+    uptime_str = ""
     if running and pid:
         try:
             import psutil
@@ -131,54 +152,41 @@ def status() -> None:
             parts.append(f"{mins}m")
             uptime_str = " ".join(parts)
         except Exception:
-            uptime_str = "unknown"
+            uptime_str = "?"
+        console.print(f"  {status_icon(True)} Uptime     [bold]{uptime_str}[/]")
 
+    # Memory
     memory_count = 0
     if MEMORY_DIR.is_dir():
         memory_count = sum(1 for _ in MEMORY_DIR.rglob("*.md"))
+    console.print(f"  {status_icon(memory_count > 0)} Memory     [bold]{memory_count}[/] entries")
 
-    jarvis_str = "[dim]OFF[/]"
+    # Last message
+    last_msg = _get_last_message_time()
+    console.print(f"  {status_icon(last_msg != '—')} Last msg   {last_msg}")
+
+    # Jarvis
     jarvis_enabled = resolve_env_value("ENABLE_JARVIS", "false").lower() == "true"
     if jarvis_enabled:
         if IS_MACOS:
-            jarvis_str = "[green]ON[/]"
+            console.print(f"  {status_icon(True)} Jarvis     [green bold]ON[/]")
         else:
-            jarvis_str = "[yellow]ON (limited — not macOS)[/]"
+            console.print(f"  {status_icon(True)} Jarvis     [yellow bold]ON[/] [dim](limited)[/]")
+    else:
+        console.print(f"  {status_icon(False)} Jarvis     [dim]OFF[/]")
 
-    last_msg = "—"
-    if DB_FILE.is_file():
-        try:
-            import sqlite3
+    # Platform
+    platform_label = "macOS" if IS_MACOS else ("Linux" if IS_LINUX else "Windows")
+    console.print(f"  {status_icon(True)} Platform   {platform_label}")
 
-            with sqlite3.connect(str(DB_FILE)) as conn:
-                row = conn.execute(
-                    "SELECT MAX(created_at) FROM messages"
-                ).fetchone()
-                if row and row[0]:
-                    ts = datetime.fromisoformat(row[0])
-                    delta = datetime.now() - ts
-                    if delta < timedelta(minutes=1):
-                        last_msg = "just now"
-                    elif delta < timedelta(hours=1):
-                        last_msg = f"{int(delta.total_seconds() // 60)}m ago"
-                    elif delta < timedelta(days=1):
-                        last_msg = f"{int(delta.total_seconds() // 3600)}h ago"
-                    else:
-                        last_msg = ts.strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            pass
+    print_divider(console)
 
-    panel = Panel(
-        f"  Status:        {status_str}\n"
-        f"  Uptime:        {uptime_str}\n"
-        f"  Memory:        {memory_count} entries\n"
-        f"  Last message:  {last_msg}\n"
-        f"  Jarvis:        {jarvis_str}\n"
-        f"  Data:          {DATA_DIR}",
-        title=f"[bold]Mr.Stack {version_str}[/]",
-        border_style="cyan",
-    )
-    console.print(panel)
+    # Quick hints
+    if not running:
+        console.print(f"  [dim]Start: [/][bold]mrstack start[/]")
+    else:
+        console.print(f"  [dim]Logs: [/][bold]mrstack logs -f[/]  [dim]|  Stop: [/][bold]mrstack stop[/]")
+    console.print()
 
 
 # ── logs ───────────────────────────────────────────────
@@ -205,7 +213,6 @@ def logs(
         pass
     except FileNotFoundError:
         console.print("[red]'tail' command not found.[/]")
-        # Fallback: read with Python
         content = log_file.read_text()
         for line in content.splitlines()[-lines:]:
             console.print(line)
@@ -243,7 +250,8 @@ def jarvis(
     enable = state == "on"
     if enable and not IS_MACOS:
         console.print(
-            "[yellow]Jarvis mode has limited functionality on non-macOS platforms.[/]"
+            "[yellow]Jarvis has limited functionality on this platform.[/]\n"
+            "[dim]  Active app detection and Chrome tab reading are macOS-only.[/]"
         )
 
     text = ENV_FILE.read_text()
@@ -257,11 +265,14 @@ def jarvis(
         text += f"\nENABLE_JARVIS={new_val}\n"
 
     ENV_FILE.write_text(text)
-    icon = "[green]ON[/]" if enable else "[red]OFF[/]"
-    console.print(f"Jarvis mode: {icon}")
+
+    if enable:
+        console.print(f"  {status_icon(True)} Jarvis     [green bold]ON[/]")
+    else:
+        console.print(f"  {status_icon(False)} Jarvis     [dim]OFF[/]")
 
     if is_running():
-        console.print("[dim]Restart the bot for changes to take effect.[/]")
+        console.print("  [dim]Restart for changes to take effect.[/]")
 
 
 # ── patch ──────────────────────────────────────────────
@@ -279,7 +290,7 @@ def patch(
 @app.command()
 def update() -> None:
     """Update Mr.Stack to the latest version."""
-    console.print("Updating Mr.Stack...")
+    console.print(f"  {status_icon(True)} Updating Mr.Stack...")
     if shutil.which("uv"):
         subprocess.run(["uv", "tool", "upgrade", "mrstack"], check=True)
     elif shutil.which("pipx"):
@@ -287,29 +298,33 @@ def update() -> None:
     else:
         subprocess.run(["pip", "install", "--upgrade", "mrstack"], check=True)
 
-    # Re-patch after update
-    console.print("Re-applying patches...")
+    console.print(f"  {status_icon(True)} Re-applying patches...")
     from .patcher import patch_install
 
     patch_install(force=True)
-    console.print("[green]Update complete.[/]")
+    console.print(f"  [green bold]Update complete.[/]")
 
 
 # ── version (explicit command) ─────────────────────────
 @app.command(name="version")
 def version_cmd() -> None:
     """Show version information."""
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_row("Mr.Stack", f"v{__version__}")
+    from .banner import LOGO
+
+    console.print(LOGO)
+
+    print_divider(console)
+
+    console.print(f"  {status_icon(True)} Mr.Stack              [bold]v{__version__}[/]")
 
     # claude-code-telegram version
     try:
         from importlib.metadata import version as pkg_version
 
         cct_ver = pkg_version("claude-code-telegram")
-        table.add_row("claude-code-telegram", f"v{cct_ver}")
+        console.print(f"  {status_icon(True)} claude-code-telegram  [bold]v{cct_ver}[/]")
     except Exception:
-        table.add_row("claude-code-telegram", "[dim]not installed[/]")
+        console.print(f"  {status_icon(False)} claude-code-telegram  [dim]not installed[/]")
 
     # Claude Code version
     try:
@@ -317,14 +332,51 @@ def version_cmd() -> None:
             ["claude", "--version"], capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
-            table.add_row("Claude Code", result.stdout.strip())
+            console.print(f"  {status_icon(True)} Claude Code           [bold]{result.stdout.strip()}[/]")
     except Exception:
-        table.add_row("Claude Code", "[dim]not found[/]")
+        console.print(f"  {status_icon(False)} Claude Code           [dim]not found[/]")
 
     # Platform
     import platform
 
-    table.add_row("Platform", f"{platform.system()} {platform.machine()}")
-    table.add_row("Python", platform.python_version())
+    console.print(f"  {status_icon(True)} Platform              {platform.system()} {platform.machine()}")
+    console.print(f"  {status_icon(True)} Python                {platform.python_version()}")
 
-    console.print(table)
+    print_divider(console)
+    console.print()
+
+
+# ── Helpers ────────────────────────────────────────────
+def _get_last_message_time() -> str:
+    if DB_FILE.is_file():
+        try:
+            import sqlite3
+
+            with sqlite3.connect(str(DB_FILE)) as conn:
+                row = conn.execute(
+                    "SELECT MAX(created_at) FROM messages"
+                ).fetchone()
+                if row and row[0]:
+                    ts = datetime.fromisoformat(row[0])
+                    delta = datetime.now() - ts
+                    if delta < timedelta(minutes=1):
+                        return "just now"
+                    elif delta < timedelta(hours=1):
+                        return f"{int(delta.total_seconds() // 60)}m ago"
+                    elif delta < timedelta(days=1):
+                        return f"{int(delta.total_seconds() // 3600)}h ago"
+                    else:
+                        return ts.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+    return "[dim]—[/]"
+
+
+def _print_quick_status() -> None:
+    """Print a quick 2-line status after start."""
+    pid = find_bot_pid()
+    if pid:
+        jarvis = resolve_env_value("ENABLE_JARVIS", "false").lower() == "true"
+        j_str = "[green]ON[/]" if jarvis else "[dim]OFF[/]"
+        console.print(f"  {status_icon(True)} Jarvis: {j_str}   {status_icon(True)} Logs: [bold]mrstack logs -f[/]")
+    console.print()
