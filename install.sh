@@ -764,6 +764,602 @@ HUDEOF
     fi
 fi
 
+# ── Step 12: Install knowledge module ──
+step "Installing knowledge module..."
+
+if [[ -d "$SRC/knowledge" ]]; then
+    warn "Knowledge module already exists."
+    read -rp "Overwrite? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] && rm -rf "$SRC/knowledge"
+fi
+
+if [[ ! -d "$SRC/knowledge" ]]; then
+    cp -r "$SCRIPT_DIR/src/knowledge" "$SRC/knowledge"
+    info "Copied src/knowledge/ (3 files)"
+else
+    info "Knowledge module already present — skipping"
+fi
+
+# ── Step 13: Patch sdk_integration.py for memory context ──
+step "Patching sdk_integration.py for memory context injection..."
+
+SDK="$SRC/claude/sdk_integration.py"
+if grep -q '_build_system_prompt' "$SDK" 2>/dev/null; then
+    info "Memory context injection already present — skipping"
+else
+    cat > /tmp/mrstack_sdk_patch.py << 'PYEOF'
+import sys
+
+sdk_path = sys.argv[1]
+with open(sdk_path, "r") as f:
+    content = f.read()
+
+# Replace inline system_prompt with method call
+old_prompt = '''                system_prompt=(
+                    f"All file operations must stay within {working_directory}. "
+                    "Use relative paths. "
+                    "IMPORTANT: You are running as a headless remote bot via Telegram. "
+                    "There is no human at the terminal to approve interactive prompts. "
+                    "NEVER use interactive tools: EnterPlanMode, ExitPlanMode, AskUserQuestion, Skill. "
+                    "Do NOT ask clarifying questions — make reasonable assumptions and proceed. "
+                    "Do NOT enter plan mode — just execute the task directly."
+                ),'''
+
+new_prompt = '                system_prompt=self._build_system_prompt(working_directory, prompt),'
+
+if old_prompt in content:
+    content = content.replace(old_prompt, new_prompt)
+else:
+    print("WARN: Could not find system_prompt pattern — may already be patched")
+
+# Add helper methods before get_active_process_count
+new_methods = '''
+    def set_memory_index(self, memory_index) -> None:
+        """Set the memory index for context injection."""
+        self._memory_index = memory_index
+
+    def _build_system_prompt(self, working_directory: Path, prompt: str) -> str:
+        """Build system prompt with optional memory/knowledge context."""
+        base = (
+            f"All file operations must stay within {working_directory}. "
+            "Use relative paths. "
+            "IMPORTANT: You are running as a headless remote bot via Telegram. "
+            "There is no human at the terminal to approve interactive prompts. "
+            "NEVER use interactive tools: EnterPlanMode, ExitPlanMode, AskUserQuestion, Skill. "
+            "Do NOT ask clarifying questions — make reasonable assumptions and proceed. "
+            "Do NOT enter plan mode — just execute the task directly."
+        )
+
+        # Inject relevant memory/knowledge context
+        memory_index = getattr(self, "_memory_index", None)
+        if memory_index:
+            try:
+                context = memory_index.get_relevant_context(prompt, max_tokens=500)
+                if context:
+                    base += f"\\n\\n{context}"
+            except Exception:
+                pass  # Never break prompt construction
+
+        return base
+
+'''
+
+if 'def set_memory_index' not in content:
+    content = content.replace(
+        '    def get_active_process_count',
+        new_methods + '    def get_active_process_count'
+    )
+
+with open(sdk_path, "w") as f:
+    f.write(content)
+print("OK")
+PYEOF
+
+    RESULT=$(python3 /tmp/mrstack_sdk_patch.py "$SDK")
+    rm -f /tmp/mrstack_sdk_patch.py
+    info "Patched sdk_integration.py for memory context ($RESULT)"
+fi
+
+# ── Step 14: Patch handlers.py for conditional execution + prompt suffix ──
+step "Patching handlers.py for smart scheduling..."
+
+HANDLERS="$SRC/events/handlers.py"
+if grep -q '_should_execute' "$HANDLERS" 2>/dev/null; then
+    info "Conditional execution already present — skipping"
+else
+    cat > /tmp/mrstack_handlers_patch.py << 'PYEOF'
+import sys
+
+handlers_path = sys.argv[1]
+with open(handlers_path, "r") as f:
+    content = f.read()
+
+# 1. Add imports and COMMON_SUFFIX
+content = content.replace(
+    "from pathlib import Path",
+    "import asyncio\nfrom pathlib import Path"
+)
+
+content = content.replace(
+    "logger = structlog.get_logger()",
+    'logger = structlog.get_logger()\n\nCOMMON_SUFFIX = "\\n\\n[기본 지시] 한국어로 작성. 새 정보가 없으면 빈 응답. 간결하게."'
+)
+
+# 2. Add pre-check + COMMON_SUFFIX to handle_scheduled
+content = content.replace(
+    '''    async def handle_scheduled(self, event: Event) -> None:
+        """Process a scheduled event through Claude."""
+        if not isinstance(event, ScheduledEvent):
+            return
+
+        logger.info(
+            "Processing scheduled event through agent",
+            job_id=event.job_id,
+            job_name=event.job_name,
+        )
+
+        prompt = event.prompt''',
+    '''    async def handle_scheduled(self, event: Event) -> None:
+        """Process a scheduled event through Claude."""
+        if not isinstance(event, ScheduledEvent):
+            return
+
+        # Pre-check: skip if nothing to do (zero tokens)
+        if not await self._should_execute(event):
+            logger.info(
+                "Skipping scheduled event (pre-check: nothing new)",
+                job_name=event.job_name,
+            )
+            return
+
+        logger.info(
+            "Processing scheduled event through agent",
+            job_id=event.job_id,
+            job_name=event.job_name,
+        )
+
+        prompt = event.prompt + COMMON_SUFFIX'''
+)
+
+# 3. Add _should_execute method before _build_webhook_prompt
+should_execute = '''
+    async def _should_execute(self, event: ScheduledEvent) -> bool:
+        """Local pre-check to decide if a scheduled job should run (zero tokens)."""
+        job = event.job_name
+
+        if job == "github-check":
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "gh", "api", "notifications", "--jq", "length",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+                count = int(stdout.decode().strip() or "0")
+                if count == 0:
+                    return False
+            except Exception as e:
+                logger.debug("github-check pre-check failed, running anyway", error=str(e))
+
+        if job == "memory-sync":
+            try:
+                import sqlite3
+                import os
+                import time
+
+                db_path = os.path.expanduser("~/claude-telegram/data/bot.db")
+                if os.path.exists(db_path):
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    three_hours_ago = time.time() - 3 * 3600
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM claude_interactions WHERE created_at > datetime(?, 'unixepoch')",
+                        (three_hours_ago,),
+                    )
+                    row = cursor.fetchone()
+                    conn.close()
+                    if row and row[0] == 0:
+                        return False
+            except Exception as e:
+                logger.debug("memory-sync pre-check failed, running anyway", error=str(e))
+
+        if job == "token-check":
+            try:
+                import json
+                import os
+                from datetime import datetime, timezone
+
+                cred_path = os.path.expanduser("~/.claude/.credentials.json")
+                if os.path.exists(cred_path):
+                    with open(cred_path) as f:
+                        creds = json.load(f)
+                    expires = creds.get("expiresAt")
+                    if expires:
+                        exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        days_left = (exp_dt - now).days
+                        if days_left > 7:
+                            return False
+            except Exception as e:
+                logger.debug("token-check pre-check failed, running anyway", error=str(e))
+
+        if job == "threads-notify":
+            try:
+                import os
+                import glob
+
+                output_dir = os.path.expanduser("~/claude-telegram/scrapers/threads/output/")
+                if os.path.isdir(output_dir):
+                    files = sorted(glob.glob(os.path.join(output_dir, "*.json")))
+                    if not files:
+                        return False
+            except Exception as e:
+                logger.debug("threads-notify pre-check failed, running anyway", error=str(e))
+
+        return True  # Default: execute
+
+'''
+
+content = content.replace(
+    '    def _build_webhook_prompt',
+    should_execute + '    def _build_webhook_prompt'
+)
+
+with open(handlers_path, "w") as f:
+    f.write(content)
+print("OK")
+PYEOF
+
+    RESULT=$(python3 /tmp/mrstack_handlers_patch.py "$HANDLERS")
+    rm -f /tmp/mrstack_handlers_patch.py
+    info "Patched handlers.py for conditional execution ($RESULT)"
+fi
+
+# ── Step 15: Patch orchestrator.py for knowledge ingestion ──
+step "Patching orchestrator.py for knowledge base..."
+
+ORCH="$SRC/bot/orchestrator.py"
+if grep -q 'knowledge_manager' "$ORCH" 2>/dev/null; then
+    info "Knowledge ingestion already present — skipping"
+else
+    cat > /tmp/mrstack_kb_orch_patch.py << 'PYEOF'
+import sys
+
+orch_path = sys.argv[1]
+with open(orch_path, "r") as f:
+    content = f.read()
+
+# Patch agentic_text: add knowledge ingestion before rate limit check
+old_text_start = '''    async def agentic_text(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Direct Claude passthrough. Simple progress. No suggestions."""
+        user_id = update.effective_user.id
+        message_text = update.message.text
+
+        logger.info(
+            "Agentic text message",
+            user_id=user_id,
+            message_length=len(message_text),
+        )
+
+        # Rate limit check'''
+
+new_text_start = '''    async def agentic_text(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Direct Claude passthrough. Simple progress. No suggestions."""
+        import re as _re
+
+        user_id = update.effective_user.id
+        message_text = update.message.text
+
+        logger.info(
+            "Agentic text message",
+            user_id=user_id,
+            message_length=len(message_text),
+        )
+
+        # Knowledge ingestion: "학습" keyword + URL(s) → store to knowledge base
+        if "학습" in message_text:
+            km = context.bot_data.get("knowledge_manager")
+            if km:
+                urls = _re.findall(r'https?://\\S+', message_text)
+                if urls:
+                    progress_msg = await update.message.reply_text("학습 중...")
+                    results = []
+                    current_dir = context.user_data.get(
+                        "current_directory", self.settings.approved_directory
+                    )
+                    for url in urls:
+                        try:
+                            item = await km.ingest_url(url, working_directory=current_dir)
+                            results.append(f"[{item.category}] {item.title}")
+                        except Exception as e:
+                            results.append(f"[실패] {url}: {str(e)[:80]}")
+                    await progress_msg.edit_text(
+                        "학습 완료:\\n" + "\\n".join(results)
+                    )
+                    return
+
+        # Rate limit check'''
+
+if old_text_start in content:
+    content = content.replace(old_text_start, new_text_start)
+
+# Patch agentic_document: add knowledge ingestion
+old_doc = '''    async def agentic_document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Process file upload -> Claude, minimal chrome."""
+        user_id = update.effective_user.id
+        document = update.message.document
+
+        logger.info(
+            "Agentic document upload",
+            user_id=user_id,
+            filename=document.file_name,
+        )
+
+        # Security validation'''
+
+new_doc = '''    async def agentic_document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Process file upload -> Claude, minimal chrome."""
+        user_id = update.effective_user.id
+        document = update.message.document
+        caption = update.message.caption or ""
+
+        logger.info(
+            "Agentic document upload",
+            user_id=user_id,
+            filename=document.file_name,
+        )
+
+        # Knowledge ingestion: "학습" in caption → store file content to knowledge base
+        if "학습" in caption:
+            km = context.bot_data.get("knowledge_manager")
+            if km:
+                try:
+                    progress_msg = await update.message.reply_text("학습 중...")
+                    file = await document.get_file()
+                    file_bytes = await file.download_as_bytearray()
+                    try:
+                        content_text = file_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        await progress_msg.edit_text("학습 실패: 텍스트 파일만 학습 가능합니다.")
+                        return
+                    current_dir = context.user_data.get(
+                        "current_directory", self.settings.approved_directory
+                    )
+                    item = await km.ingest_text(
+                        content_text,
+                        filename=document.file_name,
+                        working_directory=current_dir,
+                    )
+                    await progress_msg.edit_text(
+                        f"학습 완료:\\n[{item.category}] {item.title}"
+                    )
+                    return
+                except Exception as e:
+                    logger.error("Knowledge document ingestion failed", error=str(e))
+                    await update.message.reply_text(f"학습 실패: {str(e)[:150]}")
+                    return
+
+        # Security validation'''
+
+if old_doc in content:
+    content = content.replace(old_doc, new_doc)
+
+with open(orch_path, "w") as f:
+    f.write(content)
+print("OK")
+PYEOF
+
+    RESULT=$(python3 /tmp/mrstack_kb_orch_patch.py "$ORCH")
+    rm -f /tmp/mrstack_kb_orch_patch.py
+    info "Patched orchestrator.py for knowledge ingestion ($RESULT)"
+fi
+
+# ── Step 16: Patch message.py for photo knowledge ingestion ──
+step "Patching message.py for photo learning..."
+
+MSG="$SRC/bot/handlers/message.py"
+if grep -q 'knowledge_manager' "$MSG" 2>/dev/null; then
+    info "Photo knowledge ingestion already present — skipping"
+else
+    cat > /tmp/mrstack_msg_patch.py << 'PYEOF'
+import sys
+
+msg_path = sys.argv[1]
+with open(msg_path, "r") as f:
+    content = f.read()
+
+old_photo = '''async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle photo uploads with image file passthrough to Claude."""
+    import tempfile
+    import os
+
+    user_id = update.effective_user.id
+    settings: Settings = context.bot_data["settings"]
+    temp_image_path = None
+
+    try:
+        # Send processing indicator
+        progress_msg = await update.message.reply_text(
+            "\xf0\x9f\x93\xb8 Processing image...", parse_mode="HTML"
+        )
+
+        # Get the largest photo size
+        photo = update.message.photo[-1]
+
+        # Download image from Telegram
+        file = await photo.get_file()
+        image_bytes = await file.download_as_bytearray()'''
+
+new_photo = '''async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle photo uploads with image file passthrough to Claude."""
+    import tempfile
+    import os
+
+    user_id = update.effective_user.id
+    settings: Settings = context.bot_data["settings"]
+    temp_image_path = None
+    caption = update.message.caption or ""
+
+    # Knowledge ingestion: "학습" in caption → store image as knowledge
+    if "\xed\x95\x99\xec\x8a\xb5" in caption:
+        km = context.bot_data.get("knowledge_manager")
+        if km:
+            try:
+                progress_msg = await update.message.reply_text("\xed\x95\x99\xec\x8a\xb5 \xec\xa4\x91...")
+                photo = update.message.photo[-1]
+                file = await photo.get_file()
+                image_bytes = await file.download_as_bytearray()
+
+                image_dir = os.path.expanduser("~/claude-telegram/data/images")
+                os.makedirs(image_dir, exist_ok=True)
+
+                if image_bytes[:4] == b"\\x89PNG":
+                    ext = ".png"
+                elif image_bytes[:3] == b"\\xff\\xd8\\xff":
+                    ext = ".jpg"
+                else:
+                    ext = ".png"
+
+                temp_fd, img_path = tempfile.mkstemp(suffix=ext, dir=image_dir)
+                with os.fdopen(temp_fd, "wb") as f:
+                    f.write(image_bytes)
+
+                current_dir = context.user_data.get(
+                    "current_directory", settings.approved_directory
+                )
+                item = await km.ingest_image(
+                    img_path, caption=caption, working_directory=current_dir,
+                )
+                await progress_msg.edit_text(
+                    f"\xed\x95\x99\xec\x8a\xb5 \xec\x99\x84\xeb\xa3\x8c:\\n[{item.category}] {item.title}"
+                )
+                try:
+                    os.unlink(img_path)
+                except OSError:
+                    pass
+                return
+            except Exception as e:
+                logger.error("Knowledge image ingestion failed", error=str(e))
+                await update.message.reply_text(f"\xed\x95\x99\xec\x8a\xb5 \xec\x8b\xa4\xed\x8c\xa8: {str(e)[:150]}")
+                return
+
+    try:
+        # Send processing indicator
+        progress_msg = await update.message.reply_text(
+            "\xf0\x9f\x93\xb8 Processing image...", parse_mode="HTML"
+        )
+
+        # Get the largest photo size
+        photo = update.message.photo[-1]
+
+        # Download image from Telegram
+        file = await photo.get_file()
+        image_bytes = await file.download_as_bytearray()'''
+
+if old_photo in content:
+    content = content.replace(old_photo, new_photo)
+    with open(msg_path, "w") as f:
+        f.write(content)
+    print("OK")
+else:
+    print("SKIP: handle_photo pattern not found")
+PYEOF
+
+    RESULT=$(python3 /tmp/mrstack_msg_patch.py "$MSG")
+    rm -f /tmp/mrstack_msg_patch.py
+    info "Patched message.py for photo learning ($RESULT)"
+fi
+
+# ── Step 17: Patch main.py for KnowledgeManager + MemoryIndex init ──
+step "Patching main.py for knowledge system..."
+
+MAIN="$SRC/main.py"
+if grep -q 'knowledge_manager' "$MAIN" 2>/dev/null; then
+    info "Knowledge system init already present — skipping"
+else
+    cat > /tmp/mrstack_main_kb_patch.py << 'PYEOF'
+import sys
+
+main_path = sys.argv[1]
+with open(main_path, "r") as f:
+    content = f.read()
+
+# Add MemoryIndex init before Claude SDK manager
+content = content.replace(
+    "    # Create Claude SDK manager and integration facade\n    logger.info(\"Using Claude Python SDK integration\")\n    sdk_manager = ClaudeSDKManager(config)",
+    '''    # Initialize memory index for context injection
+    memory_index = None
+    try:
+        from src.knowledge.memory_index import MemoryIndex
+
+        memory_index = MemoryIndex()
+        memory_index.rebuild_index()
+        logger.info("Memory index initialized")
+    except Exception as e:
+        logger.warning("Memory index initialization failed", error=str(e))
+
+    # Create Claude SDK manager and integration facade
+    logger.info("Using Claude Python SDK integration")
+    sdk_manager = ClaudeSDKManager(config)
+
+    # Wire memory index into SDK manager for context injection
+    if memory_index:
+        sdk_manager.set_memory_index(memory_index)'''
+)
+
+# Add KnowledgeManager init after "Now wire up components"
+content = content.replace(
+    "        # Now wire up components that need the Telegram Bot instance\n        telegram_bot = bot.app.bot\n\n        # Start event bus\n        await event_bus.start()",
+    '''        # Now wire up components that need the Telegram Bot instance
+        telegram_bot = bot.app.bot
+
+        # Initialize knowledge manager and inject into bot_data
+        try:
+            from src.knowledge.manager import KnowledgeManager
+
+            knowledge_manager = KnowledgeManager(
+                claude_integration=claude_integration,
+            )
+            bot.app.bot_data["knowledge_manager"] = knowledge_manager
+            logger.info(
+                "Knowledge manager initialized",
+                items=knowledge_manager.get_stats().get("total_items", 0),
+            )
+        except Exception as e:
+            logger.warning("Knowledge manager initialization failed", error=str(e))
+
+        # Start event bus
+        await event_bus.start()'''
+)
+
+with open(main_path, "w") as f:
+    f.write(content)
+print("OK")
+PYEOF
+
+    RESULT=$(python3 /tmp/mrstack_main_kb_patch.py "$MAIN")
+    rm -f /tmp/mrstack_main_kb_patch.py
+    info "Patched main.py for knowledge system ($RESULT)"
+fi
+
+# ── Step 18: Create knowledge directory ──
+step "Setting up knowledge directory..."
+
+KNOWLEDGE_DIR="$HOME/claude-telegram/knowledge/items"
+mkdir -p "$KNOWLEDGE_DIR"
+if [[ ! -f "$HOME/claude-telegram/knowledge/index.json" ]]; then
+    echo '[]' > "$HOME/claude-telegram/knowledge/index.json"
+fi
+info "Knowledge directory ready: ~/claude-telegram/knowledge/"
+
 # ── Done ──
 echo ""
 echo -e "${BOLD}${GREEN}═══════════════════════════════════════${NC}"
@@ -777,11 +1373,17 @@ echo "  3. Send /jarvis to pause/resume"
 echo "  4. Send /coach for a coaching report"
 echo "  5. Claude Code statusline shows real-time usage (Claude HUD)"
 echo ""
-echo -e "${YELLOW}[!] Scheduled jobs (morning briefing, coaching, etc.) need registration.${NC}"
-echo "    If you have register-jobs.py, run it now:"
+echo "New features:"
+echo "  - Knowledge base: send '학습해줘 <URL>' to teach Mr.Stack"
+echo "  - Context diet: only relevant memory is injected per request"
+echo "  - Smart scheduling: jobs skip when nothing to report"
+echo "  - Optimized prompts: ~200 tokens saved per scheduled job"
+echo ""
+echo -e "${YELLOW}[!] Scheduled jobs need registration (prompts optimized).${NC}"
 echo "    python3 ~/claude-telegram/schedulers/register-jobs.py"
 echo ""
-echo "Commands added: /jarvis, /coach"
-echo "Data location:  ~/claude-telegram/memory/patterns/"
+echo "Commands: /jarvis, /coach"
+echo "Data:     ~/claude-telegram/memory/patterns/"
+echo "          ~/claude-telegram/knowledge/"
 echo ""
 echo -e "GitHub: ${BOLD}github.com/whynowlab/mrstack${NC}"
