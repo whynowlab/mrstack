@@ -81,8 +81,20 @@ class KnowledgeManager:
         except Exception as e:
             logger.error("Failed to save knowledge index", error=str(e))
 
+    _YT_PATTERN = re.compile(
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[\w-]+'
+    )
+
     async def ingest_url(self, url: str, working_directory=None) -> KnowledgeItem:
-        """Fetch URL content via Claude, summarize, classify, and store."""
+        """Fetch URL content via Claude, summarize, classify, and store.
+
+        YouTube URLs are handled specially — subtitles are extracted locally
+        via yt-dlp so that the actual video content can be learned.
+        """
+        # YouTube detection
+        if self._YT_PATTERN.search(url):
+            return await self._ingest_youtube(url, working_directory)
+
         prompt = (
             f"다음 URL의 내용을 분석해주세요: {url}\n\n"
             "1. WebFetch 도구로 URL 내용을 가져와주세요\n"
@@ -100,6 +112,139 @@ class KnowledgeManager:
 
         parsed = await self._call_claude_for_classification(prompt, working_directory)
         return self._store_item(parsed, source_type="url", source_ref=url)
+
+    async def _ingest_youtube(self, url: str, working_directory=None) -> KnowledgeItem:
+        """Extract YouTube subtitles via yt-dlp, then classify and store."""
+        import asyncio
+        import tempfile
+        import os
+
+        logger.info("Ingesting YouTube video", url=url)
+
+        # Extract title + subtitles with yt-dlp
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub_path = os.path.join(tmpdir, "sub")
+
+            # Get video title
+            title_proc = await asyncio.create_subprocess_exec(
+                "yt-dlp", "--print", "title", "--no-download", url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            title_out, _ = await asyncio.wait_for(title_proc.communicate(), timeout=30)
+            video_title = title_out.decode().strip() or "YouTube Video"
+
+            # Try auto-generated subtitles (ko → en → any)
+            transcript = ""
+            for lang in ["ko", "en", "ja"]:
+                proc = await asyncio.create_subprocess_exec(
+                    "yt-dlp",
+                    "--write-auto-sub",
+                    "--sub-lang", lang,
+                    "--sub-format", "vtt",
+                    "--skip-download",
+                    "-o", sub_path,
+                    url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=60)
+
+                # Find the generated .vtt file
+                for f in os.listdir(tmpdir):
+                    if f.endswith(".vtt"):
+                        vtt_path = os.path.join(tmpdir, f)
+                        transcript = self._parse_vtt(vtt_path)
+                        break
+                if transcript:
+                    break
+
+            # Fallback: try manual subtitles
+            if not transcript:
+                proc = await asyncio.create_subprocess_exec(
+                    "yt-dlp",
+                    "--write-sub",
+                    "--sub-lang", "ko,en,ja",
+                    "--sub-format", "vtt",
+                    "--skip-download",
+                    "-o", sub_path,
+                    url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=60)
+
+                for f in os.listdir(tmpdir):
+                    if f.endswith(".vtt"):
+                        vtt_path = os.path.join(tmpdir, f)
+                        transcript = self._parse_vtt(vtt_path)
+                        break
+
+        if not transcript:
+            logger.warning("No subtitles found for YouTube video", url=url)
+            # Fallback: just store title + URL as reference
+            parsed = {
+                "title": video_title,
+                "category": "reference",
+                "tags": ["youtube", "video"],
+                "summary": f"자막을 추출할 수 없는 YouTube 영상: {video_title}",
+                "key_points": [url],
+            }
+            return self._store_item(parsed, source_type="youtube", source_ref=url)
+
+        # Truncate if too long
+        if len(transcript) > 30000:
+            transcript = transcript[:30000] + "\n... (truncated)"
+
+        prompt = (
+            f"다음은 YouTube 영상 '{video_title}'의 자막입니다:\n\n"
+            f"{transcript}\n\n"
+            "아래 JSON 형식으로만 응답해주세요 (다른 텍스트 없이):\n"
+            '```json\n'
+            '{\n'
+            '  "title": "제목",\n'
+            '  "category": "tech|business|research|reference 중 하나",\n'
+            '  "tags": ["태그1", "태그2", "태그3"],\n'
+            '  "summary": "핵심 내용 3-5문장 요약",\n'
+            '  "key_points": ["핵심 포인트 1", "핵심 포인트 2", "핵심 포인트 3"]\n'
+            '}\n'
+            '```'
+        )
+
+        parsed = await self._call_claude_for_classification(prompt, working_directory)
+        # Preserve actual video title if Claude didn't extract it well
+        if parsed.get("title") == "Untitled":
+            parsed["title"] = video_title
+
+        return self._store_item(parsed, source_type="youtube", source_ref=url)
+
+    @staticmethod
+    def _parse_vtt(vtt_path: str) -> str:
+        """Parse VTT subtitle file into clean text (deduplicated)."""
+        try:
+            with open(vtt_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            return ""
+
+        seen = set()
+        text_lines = []
+        for line in lines:
+            line = line.strip()
+            # Skip VTT headers, timestamps, empty lines
+            if not line or line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+                continue
+            if "-->" in line:
+                continue
+            if line.startswith("NOTE"):
+                continue
+            # Remove HTML tags
+            clean = re.sub(r'<[^>]+>', '', line)
+            if clean and clean not in seen:
+                seen.add(clean)
+                text_lines.append(clean)
+
+        return "\n".join(text_lines)
 
     async def ingest_text(
         self, text: str, filename: Optional[str] = None, working_directory=None
