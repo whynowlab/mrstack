@@ -34,7 +34,7 @@ jobs:
       - name: Update Homebrew Formula
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
           SHA=$(shasum -a 256 dist/mrstack-${TAG}.tar.gz | cut -d' ' -f1)

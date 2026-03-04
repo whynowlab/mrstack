@@ -29,7 +29,8 @@ cat << 'BANNER'
 
 BANNER
 echo -e "  ${GREEN}Your AI butler, fully stacked.${NC}"
-echo -e "  ${YELLOW}v1.0.0${NC}"
+SCRIPT_VERSION=$(grep '^version' "$(dirname "${BASH_SOURCE[0]}")/pyproject.toml" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "1.1.2")
+echo -e "  ${YELLOW}v${SCRIPT_VERSION}${NC}"
 echo ""
 
 # ── Step 1: Find claude-code-telegram site-packages ──
