@@ -107,16 +107,37 @@ JOBS = [
     {
         "job_name": "github-check",
         "cron_expression": "0 */2 * * *",
-        "model": "haiku",
-        "prompt": """`gh api notifications` 로 읽지 않은 알림 확인.
-새 PR/이슈/코멘트 요약. PR review, 멘션, CI 실패 강조.""",
+        "model": "sonnet",
+        "prompt": """GitHub 알림 확인. 반드시 아래 순서와 규칙을 따를 것.
+
+[실행]
+1. `gh auth status 2>&1` 실행
+2. `gh api notifications 2>&1` 실행
+
+[출력 규칙 — 엄격히 적용]
+- auth status 실패(오류 포함) → "⚠️ GitHub 인증 필요: 터미널에서 `gh auth login` 실행하세요" 전송 후 종료
+- notifications 결과가 [] (빈 배열) → 빈 응답 반환, 메시지 전송 금지
+- notifications 알림 있음 → 읽지 않은 것만 요약 (PR 리뷰·멘션·CI 실패는 ⚠️ 강조)
+- 명령 실패 → 에러 원문 그대로 전송, 절대 해석·추측·번역 금지
+
+한국어로 작성.""",
     },
     {
         "job_name": "token-check",
         "cron_expression": "0 10 * * *",
-        "model": "haiku",
-        "prompt": """~/.claude/.credentials.json 토큰 확인.
-만료 7일 이내면 경고. 만료/파일없음이면 "claude CLI 실행하여 갱신" 알림.""",
+        "model": "sonnet",
+        "prompt": """Claude 토큰 상태 확인. 반드시 아래 순서와 규칙을 따를 것.
+
+[실행]
+1. `cat ~/.claude/.credentials.json 2>&1` 실행
+
+[출력 규칙]
+- 파일 없거나 읽기 실패 → "⚠️ Claude 인증 파일 없음: 터미널에서 claude 실행하여 로그인하세요" 전송
+- expiresAt 필드 있고 7일 이내 만료 → "⚠️ Claude 토큰 {N}일 후 만료 — claude 재실행하여 갱신하세요" 전송
+- 정상(만료까지 7일 이상) → 빈 응답 반환, 메시지 전송 금지
+- JSON 파싱 실패 → 파일 내용 원문 그대로 전송, 해석 금지
+
+한국어로 작성.""",
     },
 ]
 
